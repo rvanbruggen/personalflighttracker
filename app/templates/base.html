@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{{ settings.app_name }}{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✈️</text></svg>">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">✈︎ {{ settings.app_name }}</a>
+    <div class="quota" title="AeroDataBox free-tier units used this month">
+      <span class="quota-bar"><span style="width: {{ [quota.percent, 100]|min }}%"></span></span>
+      {{ quota.used }}/{{ quota.budget }} units · ~{{ quota.calls_remaining }} checks left
+    </div>
+  </header>
+
+  {% if message %}
+  <div class="flash flash-{{ level }}">{{ message }}</div>
+  {% endif %}
+
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer>
+    <span>
+      Status: AeroDataBox {{ "✓" if settings.aerodatabox_configured else "✗ no API key" }}
+      · Gmail {{ "✓" if settings.smtp_configured else "✗ not configured" }}
+      · IFTTT {{ "✓" if settings.ifttt_enabled else "off" }}
+    </span>
+    <form method="post" action="/test-alert" class="inline">
+      <button class="link" type="submit">send test alert</button>
+    </form>
+  </footer>
+</body>
+</html>

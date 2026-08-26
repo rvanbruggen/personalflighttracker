@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block content %}
+
+<section class="card">
+  <h2>Track a flight</h2>
+  <form method="post" action="/flights" class="register">
+    <label>
+      Flight number
+      <input name="flight_number" placeholder="KL1234" required autocomplete="off"
+             pattern="[A-Za-z0-9 \-]{3,10}" autofocus>
+    </label>
+    <label>
+      Departure date
+      <input type="date" name="flight_date" value="{{ today }}" required>
+    </label>
+    <label class="grow">
+      Note <span class="hint">(optional)</span>
+      <input name="label" placeholder="Rik → Lisbon, conference" autocomplete="off">
+    </label>
+    <button type="submit">Track it</button>
+  </form>
+  <p class="hint">
+    Polls once now, then hourly from 24h before departure, every 10 min from 2h
+    before, every 5 min in the air — and emails you on any change.
+  </p>
+</section>
+
+<section>
+  <h2>Tracked flights</h2>
+  {% if not flights %}
+    <p class="empty">Nothing tracked yet. Register a flight above.</p>
+  {% else %}
+  <table class="flights">
+    <thead>
+      <tr>
+        <th>Flight</th><th>Date</th><th>Route</th><th>Status</th>
+        <th>Departure (local)</th><th>Gate</th><th>Next check</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for flight in flights %}
+      <tr class="state-{{ flight.tracking_state }}">
+        <td>
+          <a href="/flights/{{ flight.id }}"><strong>{{ flight.flight_number }}</strong></a>
+          {% if flight.label %}<div class="hint">{{ flight.label }}</div>{% endif %}
+        </td>
+        <td>{{ flight.flight_date }}</td>
+        <td>{{ flight.route }}</td>
+        <td>
+          <span class="badge badge-{{ flight.status|lower|replace(' ','') }}">
+            {{ flight.status or "—" }}
+          </span>
+          {% if flight.tracking_state != "active" %}
+            <span class="hint">{{ flight.tracking_state }}</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if flight.dep_actual_local and flight.dep_actual_local != flight.dep_scheduled_local %}
+            <s>{{ flight.dep_scheduled_local }}</s> <strong>{{ flight.dep_actual_local }}</strong>
+          {% else %}
+            {{ flight.dep_scheduled_local or "—" }}
+          {% endif %}
+        </td>
+        <td>{{ flight.dep_gate or "—" }}</td>
+        <td class="hint">
+          {% if flight.next_poll_at %}{{ flight.next_poll_at.strftime("%d %b %H:%M") }}Z
+          {% else %}—{% endif %}
+        </td>
+        <td class="actions">
+          <form method="post" action="/flights/{{ flight.id }}/refresh" class="inline">
+            <button class="link" title="Poll now (uses quota)">↻</button>
+          </form>
+          <form method="post" action="/flights/{{ flight.id }}/delete" class="inline"
+                onsubmit="return confirm('Stop tracking {{ flight.flight_number }} on {{ flight.flight_date }}?')">
+            <button class="link danger" title="Remove">✕</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+
+{% if recent %}
+<section>
+  <h2>Recent activity</h2>
+  <ul class="events">
+    {% for event in recent %}
+    <li class="event event-{{ event.kind }}">
+      <span class="when">{{ event.created_at.strftime("%d %b %H:%M") }}Z</span>
+      <span class="what">{{ event.summary }}</span>
+      {% if event.notified %}<span class="sent" title="Alert sent">✉︎</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% endblock %}

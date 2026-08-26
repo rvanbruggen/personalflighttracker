@@ -1,0 +1,28 @@
+services:
+  app:
+    build: .
+    image: personal-flight-tracker
+    container_name: flight-tracker
+    restart: unless-stopped
+    # Bound to the LAN so you can reach it from any device on your network:
+    #   http://<mint-macbook-ip>:8080   (or set HOST_PORT=80 for no port suffix)
+    ports:
+      - "${HOST_PORT:-8080}:8080"
+    env_file:
+      - .env
+    environment:
+      # SQLite lives on the mounted volume so state survives rebuilds.
+      DATABASE_URL: sqlite:////app/data/flights.db
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=4).status==200 else 1)"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

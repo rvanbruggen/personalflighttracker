@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}{{ flight.flight_number }} · {{ flight.flight_date }}{% endblock %}
+{% block content %}
+
+<p class="crumb"><a href="/">← all flights</a></p>
+
+<section class="card">
+  <div class="detail-head">
+    <div>
+      <h2>{{ flight.flight_number }}
+        <span class="badge badge-{{ flight.status|lower|replace(' ','') }}">{{ flight.status or "unknown" }}</span>
+      </h2>
+      <p class="hint">
+        {{ flight.airline }} · {{ flight.flight_date }}
+        {% if flight.callsign %} · callsign {{ flight.callsign }}{% endif %}
+        {% if flight.aircraft_model %} · {{ flight.aircraft_model }} {{ flight.aircraft_reg }}{% endif %}
+      </p>
+      {% if flight.label %}<p class="note">{{ flight.label }}</p>{% endif %}
+    </div>
+    <div class="detail-actions">
+      <form method="post" action="/flights/{{ flight.id }}/refresh" class="inline">
+        <button type="submit">Refresh now</button>
+      </form>
+      {% if flight.tracking_state != "active" %}
+      <form method="post" action="/flights/{{ flight.id }}/resume" class="inline">
+        <button type="submit">Resume tracking</button>
+      </form>
+      {% endif %}
+      <form method="post" action="/flights/{{ flight.id }}/delete" class="inline"
+            onsubmit="return confirm('Stop tracking this flight?')">
+        <button type="submit" class="danger">Remove</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="legs">
+    <div class="leg">
+      <h3>Departure</h3>
+      <p class="airport">{{ flight.dep_iata or "—" }} <span class="hint">{{ flight.dep_name }}</span></p>
+      <dl>
+        <dt>Scheduled</dt><dd>{{ flight.dep_scheduled_local or "—" }}</dd>
+        <dt>Expected/actual</dt><dd>{{ flight.dep_actual_local or "—" }}</dd>
+        <dt>Terminal</dt><dd>{{ flight.dep_terminal or "—" }}</dd>
+        <dt>Gate</dt><dd>{{ flight.dep_gate or "—" }}</dd>
+      </dl>
+    </div>
+    <div class="leg">
+      <h3>Arrival</h3>
+      <p class="airport">{{ flight.arr_iata or "—" }} <span class="hint">{{ flight.arr_name }}</span></p>
+      <dl>
+        <dt>Scheduled</dt><dd>{{ flight.arr_scheduled_local or "—" }}</dd>
+        <dt>Expected/actual</dt><dd>{{ flight.arr_actual_local or "—" }}</dd>
+        <dt>Terminal</dt><dd>{{ flight.arr_terminal or "—" }}</dd>
+        <dt>Baggage belt</dt><dd>{{ flight.arr_baggage_belt or "—" }}</dd>
+      </dl>
+    </div>
+  </div>
+
+  <p class="hint poll-line">
+    Tracking: <strong>{{ flight.tracking_state }}</strong> ·
+    last checked
+    {% if flight.last_polled_at %}{{ flight.last_polled_at.strftime("%d %b %H:%M") }}Z{% else %}never{% endif %}
+    · next check
+    {% if flight.next_poll_at %}{{ flight.next_poll_at.strftime("%d %b %H:%M") }}Z{% else %}—{% endif %}
+  </p>
+  {% if flight.last_error %}
+  <p class="flash flash-error">{{ flight.last_error }}</p>
+  {% endif %}
+</section>
+
+<section>
+  <h2>Change history</h2>
+  {% if not events %}
+    <p class="empty">No changes recorded yet.</p>
+  {% else %}
+  <ul class="events">
+    {% for event in events %}
+    <li class="event event-{{ event.kind }}">
+      <span class="when">{{ event.created_at.strftime("%d %b %H:%M") }}Z</span>
+      <div class="what">
+        <strong>{{ event.summary }}</strong>
+        {% if event.detail %}<pre>{{ event.detail }}</pre>{% endif %}
+      </div>
+      {% if event.notified %}<span class="sent" title="Alert sent">✉︎</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+
+{% if flight.raw_json %}
+<section>
+  <details>
+    <summary>Raw provider response</summary>
+    <pre class="raw">{{ flight.raw_json }}</pre>
+  </details>
+</section>
+{% endif %}
+
+{% endblock %}
