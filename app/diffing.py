@@ -157,6 +157,7 @@ def apply_snapshot(flight: Flight, snapshot: FlightSnapshot) -> None:
 
     for text_attr in (
         "airline",
+        "airline_icao",
         "aircraft_model",
         "dep_iata",
         "dep_name",
@@ -170,6 +171,11 @@ def apply_snapshot(flight: Flight, snapshot: FlightSnapshot) -> None:
         new = (getattr(snapshot, text_attr) or "").strip()
         if new:
             setattr(flight, text_attr, new)
+
+    for coord_attr in ("dep_lat", "dep_lon", "arr_lat", "arr_lon"):
+        new_coord = getattr(snapshot, coord_attr)
+        if new_coord is not None:
+            setattr(flight, coord_attr, new_coord)
 
     for dt_attr in (
         "dep_scheduled_utc",

@@ -5,7 +5,12 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-MODULES = ["test_provider.py", "test_e2e.py", "test_alerts_and_quota.py"]
+MODULES = [
+    "test_provider.py",
+    "test_e2e.py",
+    "test_alerts_and_quota.py",
+    "test_positions.py",
+]
 
 failed = []
 for module in MODULES:

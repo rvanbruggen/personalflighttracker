@@ -152,3 +152,42 @@ footer {
   display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
 }
 s { color: var(--muted); }
+
+/* --- Phase 2: live map --- */
+.map-wrap {
+  border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
+  background: var(--panel-2);
+}
+#map { height: 420px; width: 100%; background: var(--panel-2); }
+@media (max-width: 640px) { #map { height: 300px; } }
+
+/* Leaflet's own chrome needs nudging to fit the dark palette. */
+.leaflet-container { background: var(--panel-2); font: inherit; }
+.leaflet-control-attribution {
+  background: color-mix(in srgb, var(--panel) 85%, transparent) !important;
+  color: var(--muted) !important; font-size: 10px !important;
+}
+.leaflet-control-attribution a { color: var(--accent) !important; }
+.leaflet-bar a {
+  background: var(--panel) !important; color: var(--text) !important;
+  border-color: var(--line) !important;
+}
+.leaflet-tooltip {
+  background: var(--panel) !important; color: var(--text) !important;
+  border: 1px solid var(--line) !important; box-shadow: none !important;
+}
+.leaflet-tooltip::before { border-top-color: var(--line) !important; }
+
+.plane-icon { background: none; border: 0; }
+.plane-icon .plane {
+  font-size: 20px; line-height: 26px; text-align: center;
+  color: var(--accent); text-shadow: 0 0 3px var(--bg);
+}
+
+.map-footer {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 12px; margin-top: 8px; flex-wrap: wrap;
+}
+.map-status { color: var(--muted); font-size: 12px; }
+.map-status-ok { color: var(--ok); }
+.map-status-warn { color: var(--warn); }

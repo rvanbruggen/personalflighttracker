@@ -13,6 +13,7 @@ class Settings(BaseSettings):
 
     # --- App ---
     app_name: str = "Personal Flight Tracker"
+    app_version: str = "0.2.0"
     timezone: str = "Europe/Brussels"  # used for rendering local times in the UI
     database_url: str = "sqlite:///./data/flights.db"
     log_level: str = "INFO"
@@ -36,6 +37,22 @@ class Settings(BaseSettings):
     # that never reported a terminal status.
     poll_abandon_after_hours: int = 12
 
+    # --- adsb.lol (live position, Phase 2) ---
+    positions_enabled: bool = True
+    adsblol_base_url: str = "https://api.adsb.lol/v2"
+    # adsb.lol is community-run and rejects generic User-Agents: it requires a
+    # contact point so operators can reach you if your client misbehaves.
+    # A project URL is fine; an email address also works.
+    adsblol_contact: str = "https://github.com/rvanbruggen/personalflighttracker"
+    adsblol_min_seconds_between_calls: float = 1.0
+    adsblol_timeout_seconds: float = 15.0
+    # Position polling is free, so it can be much tighter than status polling.
+    position_poll_seconds: int = 60
+    # Drop fixes older than this rather than drawing a stale aircraft.
+    position_max_age_seconds: int = 300
+    # Keep the trail readable: skip fixes closer together than this.
+    position_min_move_km: float = 1.0
+
     # --- Notifications: Gmail SMTP ---
     smtp_host: str = "smtp.gmail.com"
     smtp_port: int = 587
@@ -55,6 +72,11 @@ class Settings(BaseSettings):
     @classmethod
     def _upper(cls, v: str) -> str:
         return v.upper()
+
+    @property
+    def adsblol_user_agent(self) -> str:
+        slug = self.app_name.lower().replace(" ", "-")
+        return f"{slug}/{self.app_version} (+{self.adsblol_contact})"
 
     @property
     def effective_mail_from(self) -> str:

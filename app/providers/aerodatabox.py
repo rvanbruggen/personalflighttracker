@@ -27,6 +27,20 @@ log = logging.getLogger(__name__)
 _BASE_URL = "https://{host}/flights/number/{number}/{date}"
 
 
+def _airport_location(airport: dict[str, Any] | None) -> tuple[Optional[float], Optional[float]]:
+    """AeroDataBox nests coordinates under airport.location when requested."""
+    if not airport:
+        return None, None
+    location = airport.get("location")
+    if not isinstance(location, dict):
+        return None, None
+    lat, lon = location.get("lat"), location.get("lon")
+    try:
+        return (float(lat), float(lon)) if lat is not None and lon is not None else (None, None)
+    except (TypeError, ValueError):
+        return None, None
+
+
 def _time_pair(block: dict[str, Any] | None, *keys: str) -> tuple[Optional[str], str]:
     """Pick the first present time block (e.g. revised before scheduled)."""
     if not block:
@@ -78,7 +92,9 @@ class AeroDataBoxProvider:
         }
         params = {
             "withAircraftImage": "false",
-            "withLocation": "false",
+            # Airport coordinates, for the Phase 2 map's origin/destination
+            # markers and route line. Same endpoint, same unit cost.
+            "withLocation": "true",
             "dateLocalRole": "Departure",
         }
 
@@ -140,6 +156,9 @@ class AeroDataBoxProvider:
         aircraft = record.get("aircraft") or {}
         airline = record.get("airline") or {}
 
+        dep_lat, dep_lon = _airport_location(dep_airport)
+        arr_lat, arr_lon = _airport_location(arr_airport)
+
         dep_sched_utc, dep_sched_local = _time_pair(departure, "scheduledTime")
         # An actual/revised departure: runway time is truth, then revised, then predicted.
         dep_act_utc, dep_act_local = _time_pair(
@@ -155,6 +174,7 @@ class AeroDataBoxProvider:
             status=str(record.get("status") or ""),
             callsign=str(record.get("callSign") or ""),
             airline=str(airline.get("name") or ""),
+            airline_icao=str(airline.get("icao") or ""),
             aircraft_reg=str(aircraft.get("reg") or ""),
             aircraft_model=str(aircraft.get("model") or ""),
             dep_iata=str(dep_airport.get("iata") or dep_airport.get("icao") or ""),
@@ -167,6 +187,8 @@ class AeroDataBoxProvider:
             dep_scheduled_local=pretty_local(dep_sched_local),
             dep_actual_utc=parse_api_time(dep_act_utc),
             dep_actual_local=pretty_local(dep_act_local),
+            dep_lat=dep_lat,
+            dep_lon=dep_lon,
             arr_iata=str(arr_airport.get("iata") or arr_airport.get("icao") or ""),
             arr_name=str(
                 arr_airport.get("shortName") or arr_airport.get("name") or ""
@@ -178,6 +200,8 @@ class AeroDataBoxProvider:
             arr_scheduled_local=pretty_local(arr_sched_local),
             arr_actual_utc=parse_api_time(arr_act_utc),
             arr_actual_local=pretty_local(arr_act_local),
+            arr_lat=arr_lat,
+            arr_lon=arr_lon,
             raw=record,
         )
 

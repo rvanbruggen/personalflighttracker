@@ -16,10 +16,18 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from .config import settings
+from .callsign import resolve_callsign
 from .db import Flight, FlightEvent, SessionLocal, init_db, utcnow
 from .notify import send_test_alert
 from .providers.aerodatabox import provider as status_provider
-from .tracker import poll_flight, quota_status, tick
+from .tracker import (
+    flight_callsign,
+    poll_flight,
+    poll_position,
+    position_tick,
+    quota_status,
+    tick,
+)
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level, logging.INFO),
@@ -52,8 +60,10 @@ def validate_date(raw: str) -> str:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    init_db()
+    migrated = init_db()
     log.info("Database ready at %s", settings.database_url)
+    if migrated:
+        log.info("Schema migrated — added: %s", ", ".join(migrated))
 
     if not settings.aerodatabox_configured:
         log.warning(
@@ -75,8 +85,23 @@ async def lifespan(app: FastAPI):
         coalesce=True,
         next_run_time=datetime.now(timezone.utc) + timedelta(seconds=10),
     )
+    if settings.positions_enabled:
+        scheduler.add_job(
+            position_tick,
+            "interval",
+            seconds=max(settings.position_poll_seconds, 15),
+            id="position-tick",
+            max_instances=1,
+            coalesce=True,
+            next_run_time=datetime.now(timezone.utc) + timedelta(seconds=20),
+        )
+
     scheduler.start()
-    log.info("Scheduler started — checking for due flights every minute.")
+    log.info(
+        "Scheduler started — status every minute, positions every %ss (%s).",
+        settings.position_poll_seconds,
+        "enabled" if settings.positions_enabled else "disabled",
+    )
     try:
         yield
     finally:
@@ -184,6 +209,7 @@ async def flight_detail(request: Request, flight_id: int, msg: str = "", level: 
         if flight is None:
             raise HTTPException(status_code=404, detail="Flight not tracked")
         events = list(flight.events)
+        resolved = flight_callsign(flight)
 
     return templates.TemplateResponse(
         request,
@@ -191,6 +217,8 @@ async def flight_detail(request: Request, flight_id: int, msg: str = "", level: 
         {
             "flight": flight,
             "events": events,
+            "callsign": resolved,
+            "positions_enabled": settings.positions_enabled,
             "settings": settings,
             "quota": quota_status(),
             "message": msg,
@@ -253,8 +281,70 @@ async def healthz():
         "smtp_configured": settings.smtp_configured,
         "ifttt_enabled": settings.ifttt_enabled,
         "scheduler_running": scheduler.running,
+        "positions_enabled": settings.positions_enabled,
+        "position_source": "adsb.lol",
         "quota": quota_status(),
     }
+
+
+@app.get("/api/flights/{flight_id}/track")
+async def api_flight_track(flight_id: int):
+    """Everything the map needs: endpoints, trail, and the latest fix."""
+    with SessionLocal() as session:
+        flight = session.get(Flight, flight_id)
+        if flight is None:
+            raise HTTPException(status_code=404, detail="Flight not tracked")
+
+        resolved = flight_callsign(flight)
+        trail = [
+            {
+                "lat": p.lat,
+                "lon": p.lon,
+                "altitude_ft": p.altitude_ft,
+                "ground_speed_kt": p.ground_speed_kt,
+                "track_deg": p.track_deg,
+                "recorded_at": p.recorded_at.isoformat() + "Z",
+            }
+            for p in flight.positions
+        ]
+
+        return JSONResponse(
+            {
+                "flight_number": flight.flight_number,
+                "status": flight.status,
+                "tracking_state": flight.tracking_state,
+                "airborne": flight.status in {
+                    "EnRoute", "En Route", "Departed", "Approaching", "Diverted",
+                },
+                "callsign": resolved.value if resolved else "",
+                "callsign_derived": resolved.derived if resolved else False,
+                "departure": {
+                    "iata": flight.dep_iata,
+                    "name": flight.dep_name,
+                    "lat": flight.dep_lat,
+                    "lon": flight.dep_lon,
+                },
+                "arrival": {
+                    "iata": flight.arr_iata,
+                    "name": flight.arr_name,
+                    "lat": flight.arr_lat,
+                    "lon": flight.arr_lon,
+                },
+                "trail": trail,
+                "latest": trail[-1] if trail else None,
+                "position_source": flight.position_source,
+                "position_error": flight.position_error,
+                "last_position_at": flight.last_position_at.isoformat() + "Z"
+                if flight.last_position_at
+                else None,
+            }
+        )
+
+
+@app.post("/flights/{flight_id}/position")
+async def refresh_position(request: Request, flight_id: int):
+    outcome = await poll_position(flight_id, force=True)
+    return _flash(request, f"/flights/{flight_id}", f"Position: {outcome}", "ok")
 
 
 @app.get("/api/flights")

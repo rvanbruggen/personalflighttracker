@@ -9,12 +9,14 @@ from typing import Optional
 from sqlalchemy import (
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     String,
     Text,
     create_engine,
     func,
+    inspect,
 )
 from sqlalchemy.orm import (
     DeclarativeBase,
@@ -62,6 +64,7 @@ class Flight(Base):
     status: Mapped[str] = mapped_column(String(32), default="")
     callsign: Mapped[str] = mapped_column(String(16), default="")
     airline: Mapped[str] = mapped_column(String(80), default="")
+    airline_icao: Mapped[str] = mapped_column(String(8), default="")
     aircraft_reg: Mapped[str] = mapped_column(String(16), default="")
     aircraft_model: Mapped[str] = mapped_column(String(80), default="")
 
@@ -73,6 +76,8 @@ class Flight(Base):
     dep_scheduled_local: Mapped[str] = mapped_column(String(40), default="")
     dep_actual_utc: Mapped[Optional[datetime]] = mapped_column(DateTime, default=None)
     dep_actual_local: Mapped[str] = mapped_column(String(40), default="")
+    dep_lat: Mapped[Optional[float]] = mapped_column(Float, default=None)
+    dep_lon: Mapped[Optional[float]] = mapped_column(Float, default=None)
 
     arr_iata: Mapped[str] = mapped_column(String(8), default="")
     arr_name: Mapped[str] = mapped_column(String(120), default="")
@@ -83,8 +88,24 @@ class Flight(Base):
     arr_scheduled_local: Mapped[str] = mapped_column(String(40), default="")
     arr_actual_utc: Mapped[Optional[datetime]] = mapped_column(DateTime, default=None)
     arr_actual_local: Mapped[str] = mapped_column(String(40), default="")
+    arr_lat: Mapped[Optional[float]] = mapped_column(Float, default=None)
+    arr_lon: Mapped[Optional[float]] = mapped_column(Float, default=None)
+
+    # --- Phase 2: live position tracking ---
+    position_source: Mapped[str] = mapped_column(String(16), default="")
+    last_position_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=None)
+    next_position_poll_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, default=None, index=True
+    )
+    position_error: Mapped[str] = mapped_column(Text, default="")
 
     raw_json: Mapped[str] = mapped_column(Text, default="")
+
+    positions: Mapped[list["FlightPosition"]] = relationship(
+        back_populates="flight",
+        cascade="all, delete-orphan",
+        order_by="FlightPosition.recorded_at",
+    )
 
     events: Mapped[list["FlightEvent"]] = relationship(
         back_populates="flight",
@@ -116,6 +137,27 @@ class FlightEvent(Base):
     notified: Mapped[bool] = mapped_column(Boolean, default=False)
 
     flight: Mapped[Flight] = relationship(back_populates="events")
+
+
+class FlightPosition(Base):
+    """One ADS-B fix — the flight trail is these rows in time order."""
+
+    __tablename__ = "flight_positions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    flight_id: Mapped[int] = mapped_column(
+        ForeignKey("flights.id", ondelete="CASCADE"), index=True
+    )
+    recorded_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    lat: Mapped[float] = mapped_column(Float)
+    lon: Mapped[float] = mapped_column(Float)
+    altitude_ft: Mapped[Optional[int]] = mapped_column(Integer, default=None)
+    ground_speed_kt: Mapped[Optional[int]] = mapped_column(Integer, default=None)
+    track_deg: Mapped[Optional[int]] = mapped_column(Integer, default=None)
+    on_ground: Mapped[bool] = mapped_column(Boolean, default=False)
+    source: Mapped[str] = mapped_column(String(16), default="adsb.lol")
+
+    flight: Mapped[Flight] = relationship(back_populates="positions")
 
 
 class ApiCall(Base):
@@ -152,8 +194,54 @@ engine = create_engine(
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 
-def init_db() -> None:
+# Columns added after v0.1.0. SQLAlchemy's create_all() only creates missing
+# *tables*, so an existing flights.db needs these bolted on explicitly.
+_ADDED_COLUMNS: dict[str, list[tuple[str, str]]] = {
+    "flights": [
+        ("airline_icao", "VARCHAR(8) DEFAULT ''"),
+        ("dep_lat", "FLOAT"),
+        ("dep_lon", "FLOAT"),
+        ("arr_lat", "FLOAT"),
+        ("arr_lon", "FLOAT"),
+        ("position_source", "VARCHAR(16) DEFAULT ''"),
+        ("last_position_at", "DATETIME"),
+        ("next_position_poll_at", "DATETIME"),
+        ("position_error", "TEXT DEFAULT ''"),
+    ],
+}
+
+
+def _migrate() -> list[str]:
+    """Idempotently add columns introduced after the first release.
+
+    Safe to run on every startup: existing rows keep their data, and the new
+    columns arrive empty (which every code path already treats as 'unknown').
+    """
+    applied: list[str] = []
+    if not settings.database_url.startswith("sqlite"):
+        return applied
+
+    inspector = inspect(engine)
+    with engine.begin() as connection:
+        for table, columns in _ADDED_COLUMNS.items():
+            if table not in inspector.get_table_names():
+                continue  # create_all() will build it complete
+            existing = {col["name"] for col in inspector.get_columns(table)}
+            for name, ddl in columns:
+                if name in existing:
+                    continue
+                connection.exec_driver_sql(
+                    f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"
+                )
+                applied.append(f"{table}.{name}")
+    return applied
+
+
+def init_db() -> list[str]:
+    """Create anything missing, then migrate. Returns the columns it added."""
+    migrated = _migrate()
     Base.metadata.create_all(engine)
+    return migrated
 
 
 def units_used_this_month(session, provider: str = "aerodatabox") -> int:

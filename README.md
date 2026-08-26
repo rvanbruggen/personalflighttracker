@@ -10,9 +10,9 @@ to IFTTT's Email trigger, which turns it into a push notification on your phone.
 
 Runs as a single container. €0/month at personal volume.
 
-**This is Phase 1** of [SPEC.md](SPEC.md): registration, adaptive status polling,
-and alerting. The live Leaflet map (Phase 2) is not built yet — but the callsign
-that unlocks it is already captured and stored on every flight.
+**Phases 1 and 2** of [SPEC.md](SPEC.md) are built: registration, adaptive status
+polling, alerting, and the live map with flight trail. Phase 3 (digest, history,
+auto-purge, OpenSky fallback) is not started.
 
 ---
 
@@ -142,6 +142,39 @@ intermittently, and that shouldn't wake your phone at 4am.
 
 ---
 
+## The live map
+
+Each flight's detail page carries a Leaflet map on OpenStreetMap tiles showing
+the origin and destination, the planned route, the flown trail, and the aircraft
+itself with altitude, ground speed and heading.
+
+Positions come from **[adsb.lol](https://www.adsb.lol/)** — community-run, free,
+no API key, and completely separate from your AeroDataBox quota. Polling only
+happens while a flight is actually airborne, so an empty tracker costs nothing.
+
+Two things to know:
+
+- **adsb.lol requires a real contact point** in the User-Agent and returns
+  HTTP 403 without one. `ADSBLOL_CONTACT` defaults to this project's URL;
+  change it to your own URL or email if you like.
+- **Coverage has gaps.** Community ADS-B receivers thin out over oceans and
+  parts of Africa and Asia, so the aircraft will disappear from the map
+  mid-Atlantic while status updates keep arriving. The map says so rather than
+  showing a stale position — fixes older than `POSITION_MAX_AGE_SECONDS` are
+  discarded.
+
+### Callsigns
+
+Position lookup is keyed on the ADS-B callsign (`BAW117`), not the flight number
+(`BA117`). AeroDataBox usually supplies it. When it doesn't, the callsign is
+derived from the airline's ICAO code plus the flight number — the convention
+most carriers follow.
+
+A derived callsign is **labelled as unconfirmed** in the UI and flagged as
+`callsign_derived` in the API, because not every carrier follows the convention.
+When neither route yields a callsign, the map says live position is unavailable
+rather than showing a possibly-wrong aircraft.
+
 ## Configuration
 
 Every setting lives in `.env`; see [.env.example](.env.example) for the annotated
@@ -158,7 +191,11 @@ The ones worth knowing:
 | `IFTTT_ENABLED` | `true` | Set `false` to skip the phone-notification copy. |
 | `IFTTT_HASHTAG` | `#flight` | Must match your applet's tag. |
 | `NOTIFICATIONS_ENABLED` | `true` | `false` records changes silently — handy for testing. |
-| `POLL_*` | see table above | Cadence tuning. |
+| `POLL_*` | see table above | Status cadence tuning. |
+| `POSITIONS_ENABLED` | `true` | `false` disables the map and position polling. |
+| `ADSBLOL_CONTACT` | project URL | Contact point adsb.lol requires; 403 without it. |
+| `POSITION_POLL_SECONDS` | `60` | How often to fetch a fix while airborne. |
+| `HOST_PORT` | `8080` | Port on the host. `80` gives you a bare URL. |
 
 ## Endpoints
 
@@ -168,6 +205,7 @@ The ones worth knowing:
 | `GET /flights/{id}` | One flight: current state, change history, raw provider JSON |
 | `GET /healthz` | Config + scheduler + quota status |
 | `GET /api/flights` | JSON list of tracked flights |
+| `GET /api/flights/{id}/track` | Trail, endpoints, and latest fix — what the map consumes |
 
 ## Development
 
@@ -184,6 +222,13 @@ send real email, so they cost no quota:
 .venv/bin/python tests/run_all.py
 ```
 
+### Upgrading from v0.1.0
+
+Phase 2 adds columns to the `flights` table and a new `flight_positions` table.
+The app migrates SQLite automatically on startup — existing flights keep their
+data, and the new columns start empty. Just `git pull && docker compose up -d --build`;
+the log line `Schema migrated — added: …` confirms it ran.
+
 ### Layout
 
 ```
@@ -194,9 +239,12 @@ app/
   notify.py       Gmail SMTP + IFTTT dual send
   db.py           SQLite models (flights, events, api_calls)
   config.py       .env-backed settings
+  callsign.py     Callsign resolution, with ICAO-derivation fallback
+  static/map.js   Leaflet map: trail, route, aircraft marker
   providers/
-    base.py       FlightSnapshot + the provider interface
+    base.py       FlightSnapshot / PositionFix + the provider interfaces
     aerodatabox.py  The only file that knows about AeroDataBox
+    adsblol.py      The only file that knows about adsb.lol
 ```
 
 Swapping status providers means writing one new file in `providers/` that
@@ -212,11 +260,14 @@ returns a `FlightSnapshot` — nothing else changes.
 | `has no record of ... yet` | Normal far in advance. The app retries and gives up ~12h after the scheduled arrival. |
 | Header shows quota exhausted | Free tier spent for the month. Resets on the 1st; `Refresh now` still works for one-off checks. |
 | Permission errors on `./data` | Container runs as uid 1000. `sudo chown -R 1000:1000 data`. |
+| Map shows "no receiver is currently seeing…" | Normal ADS-B coverage gap, especially over water. Status keeps updating. |
+| `adsb.lol rejected the request (HTTP 403)` | Set `ADSBLOL_CONTACT` to a URL or email they can reach you at. |
+| Map is blank with no aircraft | Flight isn't airborne yet — position polling only runs between departure and arrival. |
 
 ## Roadmap
 
-- **Phase 2** — live position from adsb.lol/OpenSky by callsign, Leaflet map, trail.
-- **Phase 3** — daily digest, flight history, auto-purge, OpenSky OAuth2 fallback.
+- **Phase 3** — daily digest, flight history, auto-purge landed flights, and an
+  OpenSky OAuth2 fallback for when adsb.lol has no coverage.
 
 ## License
 

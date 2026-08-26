@@ -13,12 +13,35 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+from sqlalchemy import or_
+
+from .callsign import resolve_callsign
 from .config import settings
-from .db import ApiCall, Flight, FlightEvent, SessionLocal, units_used_this_month, utcnow
+from .db import (
+    ApiCall,
+    Flight,
+    FlightEvent,
+    FlightPosition,
+    SessionLocal,
+    units_used_this_month,
+    utcnow,
+)
 from .diffing import apply_snapshot, delay_minutes, diff_snapshot, summarise
 from .notify import send_alert
+from .providers.adsblol import provider as position_provider
 from .providers.aerodatabox import provider as status_provider
-from .providers.base import FlightNotFound, FlightSnapshot, ProviderError
+from .providers.base import (
+    AIRBORNE_STATUSES,
+    FlightNotFound,
+    FlightSnapshot,
+    PositionNotFound,
+    ProviderError,
+)
+
+# Provider statuses are Title-cased ("EnRoute"); AIRBORNE_STATUSES is lowercase.
+AIRBORNE_STATUSES_TITLE = {
+    "EnRoute", "En Route", "Departed", "Approaching", "Diverted",
+}
 
 log = logging.getLogger(__name__)
 
@@ -274,6 +297,9 @@ async def poll_flight(flight_id: int, *, force: bool = False) -> str:
             outcome += " — abandoned (past arrival, no terminal status)"
         else:
             flight.next_poll_at = _naive(utcnow() + next_poll_delay(flight, snapshot))
+            # Airborne: start position polling right away rather than waiting.
+            if snapshot.is_airborne and flight.next_position_poll_at is None:
+                flight.next_position_poll_at = _naive(utcnow())
 
         session.commit()
         return outcome
@@ -301,4 +327,168 @@ async def tick() -> int:
             log.info("Polled flight id=%s: %s", flight_id, outcome)
         except Exception:  # noqa: BLE001 - a bad flight must not kill the loop
             log.exception("Unhandled error polling flight id=%s", flight_id)
+    return len(due_ids)
+
+
+# ------------------------------------------------------------------ positions
+
+
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    import math
+
+    radius = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = (
+        math.sin(dlat / 2) ** 2
+        + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2
+    )
+    return 2 * radius * math.asin(math.sqrt(a))
+
+
+def flight_callsign(flight: Flight):
+    """The callsign to look up, plus whether we had to guess it."""
+    return resolve_callsign(flight.callsign, flight.flight_number, flight.airline_icao)
+
+
+async def poll_position(flight_id: int, *, force: bool = False) -> str:
+    """Fetch one ADS-B fix for a flight and append it to the trail."""
+    if not settings.positions_enabled and not force:
+        return "position tracking disabled"
+
+    with SessionLocal() as session:
+        flight = session.get(Flight, flight_id)
+        if flight is None:
+            return "flight not found"
+        resolved = flight_callsign(flight)
+        last = flight.positions[-1] if flight.positions else None
+        last_point = (last.lat, last.lon) if last else None
+
+    if not resolved:
+        with SessionLocal() as session:
+            flight = session.get(Flight, flight_id)
+            if flight:
+                flight.position_error = (
+                    "no callsign available and none could be derived from the "
+                    "flight number — live position unavailable"
+                )
+                flight.next_position_poll_at = _naive(
+                    utcnow() + timedelta(seconds=settings.position_poll_seconds * 5)
+                )
+                session.commit()
+        return "no callsign"
+
+    try:
+        fix = await position_provider.fetch_position(resolved.value)
+    except PositionNotFound as exc:
+        with SessionLocal() as session:
+            flight = session.get(Flight, flight_id)
+            if flight:
+                flight.position_error = str(exc)
+                flight.next_position_poll_at = _naive(
+                    utcnow() + timedelta(seconds=settings.position_poll_seconds)
+                )
+                session.commit()
+        return "no position (coverage gap)"
+    except ProviderError as exc:
+        log.warning("Position lookup failed for %s: %s", resolved.value, exc)
+        with SessionLocal() as session:
+            flight = session.get(Flight, flight_id)
+            if flight:
+                flight.position_error = str(exc)
+                flight.next_position_poll_at = _naive(
+                    utcnow() + timedelta(seconds=settings.position_poll_seconds * 3)
+                )
+                session.commit()
+        return f"error: {exc}"
+
+    # Refuse a stale fix rather than drawing the aircraft somewhere it isn't.
+    if (
+        fix.age_seconds is not None
+        and fix.age_seconds > settings.position_max_age_seconds
+    ):
+        with SessionLocal() as session:
+            flight = session.get(Flight, flight_id)
+            if flight:
+                flight.position_error = (
+                    f"last fix is {int(fix.age_seconds)}s old — treating as stale"
+                )
+                flight.next_position_poll_at = _naive(
+                    utcnow() + timedelta(seconds=settings.position_poll_seconds)
+                )
+                session.commit()
+        return "stale fix ignored"
+
+    moved_km = (
+        _haversine_km(last_point[0], last_point[1], fix.lat, fix.lon)
+        if last_point
+        else None
+    )
+
+    with SessionLocal() as session:
+        flight = session.get(Flight, flight_id)
+        if flight is None:
+            return "flight deleted mid-poll"
+
+        appended = False
+        if moved_km is None or moved_km >= settings.position_min_move_km:
+            session.add(
+                FlightPosition(
+                    flight_id=flight.id,
+                    lat=fix.lat,
+                    lon=fix.lon,
+                    altitude_ft=fix.altitude_ft,
+                    ground_speed_kt=fix.ground_speed_kt,
+                    track_deg=fix.track_deg,
+                    on_ground=fix.on_ground,
+                    source=fix.source,
+                )
+            )
+            appended = True
+
+        flight.last_position_at = _naive(utcnow())
+        flight.position_source = fix.source
+        flight.position_error = ""
+        # Record a provider-confirmed callsign so we stop guessing next time.
+        if not flight.callsign and not resolved.derived:
+            flight.callsign = resolved.value
+        if fix.registration and not flight.aircraft_reg:
+            flight.aircraft_reg = fix.registration
+        flight.next_position_poll_at = _naive(
+            utcnow() + timedelta(seconds=settings.position_poll_seconds)
+        )
+        session.commit()
+
+    if appended:
+        return f"fix recorded ({fix.lat:.3f}, {fix.lon:.3f}) at {fix.altitude_ft or '?'}ft"
+    return f"unchanged (moved {moved_km:.2f}km, below threshold)"
+
+
+async def position_tick() -> int:
+    """Poll positions for every airborne flight that is due."""
+    if not settings.positions_enabled:
+        return 0
+
+    now = _naive(utcnow())
+    with SessionLocal() as session:
+        due_ids = [
+            row.id
+            for row in session.query(Flight)
+            .filter(
+                Flight.tracking_state == "active",
+                Flight.status.in_(list(AIRBORNE_STATUSES_TITLE)),
+                or_(
+                    Flight.next_position_poll_at.is_(None),
+                    Flight.next_position_poll_at <= now,
+                ),
+            )
+            .all()
+        ]
+
+    for flight_id in due_ids:
+        try:
+            outcome = await poll_position(flight_id)
+            log.info("Position poll flight id=%s: %s", flight_id, outcome)
+        except Exception:  # noqa: BLE001
+            log.exception("Unhandled error polling position for id=%s", flight_id)
     return len(due_ids)

@@ -1,5 +1,20 @@
 {% extends "base.html" %}
 {% block title %}{{ flight.flight_number }} · {{ flight.flight_date }}{% endblock %}
+
+{% block head %}
+{% if positions_enabled %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if positions_enabled %}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="/static/map.js"></script>
+{% endif %}
+{% endblock %}
 {% block content %}
 
 <p class="crumb"><a href="/">← all flights</a></p>
@@ -67,6 +82,34 @@
   <p class="flash flash-error">{{ flight.last_error }}</p>
   {% endif %}
 </section>
+
+{% if positions_enabled %}
+<section>
+  <h2>Live position</h2>
+  <div class="map-wrap">
+    <div id="map" data-flight-id="{{ flight.id }}"></div>
+  </div>
+  <div class="map-footer">
+    <span id="map-status" class="map-status">Loading…</span>
+    <form method="post" action="/flights/{{ flight.id }}/position" class="inline">
+      <button class="link" type="submit" title="Fetch a position fix now">↻ position</button>
+    </form>
+  </div>
+  {% if callsign and callsign.derived %}
+  <p class="hint">
+    The status provider did not supply a callsign, so
+    <strong>{{ callsign.value }}</strong> was derived from the flight number.
+    Most carriers follow this convention, but not all — treat the aircraft
+    shown as unconfirmed.
+  </p>
+  {% elif not callsign %}
+  <p class="hint">
+    No callsign available and none could be derived, so live position cannot be
+    looked up for this flight.
+  </p>
+  {% endif %}
+</section>
+{% endif %}
 
 <section>
   <h2>Change history</h2>

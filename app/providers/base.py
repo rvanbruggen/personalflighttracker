@@ -62,6 +62,7 @@ class FlightSnapshot:
     status: str = ""
     callsign: str = ""
     airline: str = ""
+    airline_icao: str = ""
     aircraft_reg: str = ""
     aircraft_model: str = ""
 
@@ -73,6 +74,8 @@ class FlightSnapshot:
     dep_scheduled_local: str = ""
     dep_actual_utc: Optional[datetime] = None
     dep_actual_local: str = ""
+    dep_lat: Optional[float] = None
+    dep_lon: Optional[float] = None
 
     arr_iata: str = ""
     arr_name: str = ""
@@ -83,6 +86,8 @@ class FlightSnapshot:
     arr_scheduled_local: str = ""
     arr_actual_utc: Optional[datetime] = None
     arr_actual_local: str = ""
+    arr_lat: Optional[float] = None
+    arr_lon: Optional[float] = None
 
     raw: dict[str, Any] = field(default_factory=dict)
 
@@ -95,9 +100,44 @@ class FlightSnapshot:
         return self.status.strip().lower() in TERMINAL_STATUSES
 
 
+@dataclass
+class PositionFix:
+    """One ADS-B position report, provider-neutral."""
+
+    lat: float
+    lon: float
+    altitude_ft: Optional[int] = None
+    ground_speed_kt: Optional[int] = None
+    track_deg: Optional[int] = None
+    on_ground: bool = False
+    callsign: str = ""
+    registration: str = ""
+    icao24: str = ""
+    source: str = ""
+    # Seconds since the position was actually observed by a receiver.
+    age_seconds: Optional[float] = None
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+class PositionNotFound(ProviderError):
+    """No ADS-B receiver is currently seeing this aircraft.
+
+    Entirely normal: community coverage has gaps over oceans and parts of
+    Africa/Asia, so a flight can be airborne with no position available.
+    """
+
+
 class StatusProvider(Protocol):
     name: str
 
     async def fetch(self, flight_number: str, flight_date: str) -> FlightSnapshot:
         """Return the current status, or raise a ProviderError subclass."""
+        ...
+
+
+class PositionProvider(Protocol):
+    name: str
+
+    async def fetch_position(self, callsign: str) -> PositionFix:
+        """Return the aircraft's current position, or raise a ProviderError."""
         ...
