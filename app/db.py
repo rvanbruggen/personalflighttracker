@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import calendar
 import os
 from datetime import datetime, timezone
 from typing import Optional
@@ -244,15 +245,45 @@ def init_db() -> list[str]:
     return migrated
 
 
-def units_used_this_month(session, provider: str = "aerodatabox") -> int:
-    """Units consumed since the 1st of the current UTC month."""
-    now = utcnow()
-    month_start = datetime(now.year, now.month, 1)
+def _clamp_day(year: int, month: int, day: int) -> int:
+    """A reset day of 31 means 'the 28th' in February, not an error."""
+    return min(day, calendar.monthrange(year, month)[1])
+
+
+def quota_period_start(now: Optional[datetime] = None, reset_day: Optional[int] = None) -> datetime:
+    """Start of the current quota window (naive UTC).
+
+    RapidAPI resets on the subscription's billing anniversary, so this counts
+    from the most recent occurrence of `reset_day` rather than the 1st.
+    """
+    now = now or utcnow()
+    if now.tzinfo is not None:
+        now = now.astimezone(timezone.utc).replace(tzinfo=None)
+    day = reset_day if reset_day is not None else settings.aerodatabox_quota_reset_day
+
+    this_month = _clamp_day(now.year, now.month, day)
+    if now.day >= this_month:
+        return datetime(now.year, now.month, this_month)
+
+    year, month = (now.year, now.month - 1) if now.month > 1 else (now.year - 1, 12)
+    return datetime(year, month, _clamp_day(year, month, day))
+
+
+def quota_period_end(now: Optional[datetime] = None, reset_day: Optional[int] = None) -> datetime:
+    """When the current window rolls over — i.e. the next reset."""
+    start = quota_period_start(now, reset_day)
+    day = reset_day if reset_day is not None else settings.aerodatabox_quota_reset_day
+    year, month = (start.year, start.month + 1) if start.month < 12 else (start.year + 1, 1)
+    return datetime(year, month, _clamp_day(year, month, day))
+
+
+def units_used_this_period(session, provider: str = "aerodatabox") -> int:
+    """Units consumed since the start of the current quota window."""
     total = (
         session.query(func.coalesce(func.sum(ApiCall.units), 0))
         .filter(
             ApiCall.provider == provider,
-            ApiCall.created_at >= month_start,
+            ApiCall.created_at >= quota_period_start(),
         )
         .scalar()
     )

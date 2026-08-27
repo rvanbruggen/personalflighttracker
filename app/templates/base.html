@@ -11,9 +11,11 @@
 <body>
   <header class="topbar">
     <a class="brand" href="/">✈︎ {{ settings.app_name }}</a>
-    <div class="quota" title="AeroDataBox free-tier units used this month">
+    <div class="quota"
+         title="AeroDataBox free-tier units used this billing period · resets {{ quota.resets_at }}">
       <span class="quota-bar"><span style="width: {{ [quota.percent, 100]|min }}%"></span></span>
       {{ quota.used }}/{{ quota.budget }} units · ~{{ quota.calls_remaining }} checks left
+      · resets {{ quota.resets_at }}
     </div>
   </header>
 

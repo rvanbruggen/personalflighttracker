@@ -28,6 +28,17 @@ def check(label, condition, extra=""):
         failures.append(label)
 
 
+def _rejects_bad_day() -> bool:
+    from pydantic import ValidationError
+
+    from app.config import Settings
+    try:
+        Settings(aerodatabox_quota_reset_day=45, _env_file=None)
+    except ValidationError:
+        return True
+    return False
+
+
 def make_flight(**kwargs):
     defaults = dict(
         flight_number="KL9999",
@@ -237,6 +248,24 @@ settings.smtp_user = ""
 settings.smtp_password = ""
 result = notify.send_alert("subject", "body")
 check("no crash, clear error", not result.ok and "SMTP_USER" in result.error, result.error)
+
+print("\n8. Quota window follows the RapidAPI billing anniversary")
+from datetime import datetime as _dt  # noqa: E402
+from app.db import quota_period_end, quota_period_start  # noqa: E402
+
+for now, day, exp_start, exp_end, why in [
+    (_dt(2026, 9, 10), 26, _dt(2026, 8, 26), _dt(2026, 9, 26), "mid-window"),
+    (_dt(2026, 9, 26), 26, _dt(2026, 9, 26), _dt(2026, 10, 26), "on reset day"),
+    (_dt(2026, 1, 5), 26, _dt(2025, 12, 26), _dt(2026, 1, 26), "across new year"),
+    (_dt(2026, 3, 5), 31, _dt(2026, 2, 28), _dt(2026, 3, 31), "day 31 clamps in Feb"),
+    (_dt(2024, 2, 29), 31, _dt(2024, 2, 29), _dt(2024, 3, 31), "leap year"),
+    (_dt(2026, 9, 15), 1, _dt(2026, 9, 1), _dt(2026, 10, 1), "default calendar month"),
+]:
+    check(f"reset day {day}, {why}",
+          quota_period_start(now, day) == exp_start and quota_period_end(now, day) == exp_end,
+          f"{quota_period_start(now, day):%Y-%m-%d}..{quota_period_end(now, day):%Y-%m-%d}")
+
+check("invalid reset day rejected", _rejects_bad_day())
 
 print()
 if failures:

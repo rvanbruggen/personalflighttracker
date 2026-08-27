@@ -127,8 +127,24 @@ The whole point is to spend API quota only when something might actually change:
 Roughly 30–50 checks per flight. Every interval is tunable in `.env`.
 
 Two safety rails: calls are throttled to stay under the 1 req/sec limit, and the
-app refuses to poll once the monthly unit budget is spent (a manual **Refresh
-now** can still override that for one call).
+app refuses to poll once the unit budget is spent (a manual **Refresh now** can
+still override that for one call).
+
+### When the quota resets
+
+**RapidAPI resets on your subscription's billing anniversary, not on the 1st of
+the calendar month.** Subscribe on the 26th and your window runs 26th → 26th.
+
+Set `AERODATABOX_QUOTA_RESET_DAY` to the day you subscribed so the app's counter
+tracks the same window. Leave it at `1` only if that's genuinely your billing
+day — otherwise the header will reset to zero while RapidAPI is still counting,
+and you can hit real HTTP 429s with the bar showing plenty left.
+
+Your RapidAPI dashboard is authoritative: it shows actual usage and the true
+reset date. The app's counter only tallies calls *this app* made, so a call from
+anywhere else on the same key won't appear.
+
+adsb.lol has no quota to reset — it is free and unmetered.
 
 ## What triggers an alert
 
@@ -193,6 +209,7 @@ The ones worth knowing:
 |---|---|---|
 | `AERODATABOX_API_KEY` | — | RapidAPI key. Required. |
 | `AERODATABOX_MONTHLY_UNIT_BUDGET` | `600` | Hard stop. Lower it if you share the key. |
+| `AERODATABOX_QUOTA_RESET_DAY` | `1` | Day of month your RapidAPI quota resets — see below. |
 | `SMTP_USER` / `SMTP_PASSWORD` | — | Gmail address + **app password**. |
 | `MAIL_TO` | = `SMTP_USER` | Where readable alerts land. |
 | `IFTTT_ENABLED` | `true` | Set `false` to skip the phone-notification copy. |
@@ -266,7 +283,7 @@ returns a `FlightSnapshot` — nothing else changes.
 | `Gmail rejected the login` | Using your account password. It must be a 16-character app password, with 2FA enabled. |
 | Emails arrive, phone stays silent | IFTTT applet tag doesn't match `IFTTT_HASHTAG`, or your IFTTT account uses a different email than `SMTP_USER`. |
 | `has no record of ... yet` | Normal far in advance. The app retries and gives up ~12h after the scheduled arrival. |
-| Header shows quota exhausted | Free tier spent for the month. Resets on the 1st; `Refresh now` still works for one-off checks. |
+| Header shows quota exhausted | Free tier spent for this billing period. The header shows the reset date; `Refresh now` still works for one-off checks. |
 | Permission errors on `./data` | Container runs as uid 1000. `sudo chown -R 1000:1000 data`. |
 | Map shows "no receiver is currently seeing…" | Normal ADS-B coverage gap, especially over water. Status keeps updating. |
 | `adsb.lol rejected the request (HTTP 403)` | Set `ADSBLOL_CONTACT` to a URL or email they can reach you at. |

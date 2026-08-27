@@ -23,7 +23,8 @@ from .db import (
     FlightEvent,
     FlightPosition,
     SessionLocal,
-    units_used_this_month,
+    quota_period_end,
+    units_used_this_period,
     utcnow,
 )
 from .diffing import apply_snapshot, delay_minutes, diff_snapshot, summarise
@@ -113,15 +114,20 @@ def _record_call(session, endpoint: str, units: int, ok: bool, note: str = "") -
 
 def quota_status() -> dict:
     with SessionLocal() as session:
-        used = units_used_this_month(session, status_provider.name)
+        used = units_used_this_period(session, status_provider.name)
     budget = settings.aerodatabox_monthly_unit_budget
     per_call = settings.aerodatabox_units_per_status_call
+    resets_at = quota_period_end()
+    days_left = max((resets_at - utcnow().replace(tzinfo=None)).days, 0)
     return {
         "used": used,
         "budget": budget,
         "remaining": max(budget - used, 0),
         "calls_remaining": max(budget - used, 0) // max(per_call, 1),
         "percent": round(100 * used / budget, 1) if budget else 0.0,
+        "resets_at": resets_at.strftime("%d %b %Y"),
+        "days_left": days_left,
+        "reset_day": settings.aerodatabox_quota_reset_day,
     }
 
 
@@ -178,7 +184,7 @@ async def poll_flight(flight_id: int, *, force: bool = False) -> str:
             return "flight not found"
         number, date = flight.flight_number, flight.flight_date
         is_first_poll = flight.last_polled_at is None
-        used = units_used_this_month(session, status_provider.name)
+        used = units_used_this_period(session, status_provider.name)
 
     budget = settings.aerodatabox_monthly_unit_budget
     cost = settings.aerodatabox_units_per_status_call

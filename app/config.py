@@ -13,7 +13,7 @@ class Settings(BaseSettings):
 
     # --- App ---
     app_name: str = "Personal Flight Tracker"
-    app_version: str = "0.2.1"
+    app_version: str = "0.2.2"
     timezone: str = "Europe/Brussels"  # used for rendering local times in the UI
     database_url: str = "sqlite:///./data/flights.db"
     log_level: str = "INFO"
@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     aerodatabox_host: str = "aerodatabox.p.rapidapi.com"
     # Free tier: ~600 units/month, a status call costs 2 units.
     aerodatabox_monthly_unit_budget: int = 600
+    # RapidAPI resets quota on your subscription's billing anniversary, NOT on
+    # the 1st of the calendar month. Set this to the day of month you
+    # subscribed so the local counter tracks the real window.
+    aerodatabox_quota_reset_day: int = 1
     aerodatabox_units_per_status_call: int = 2
     # Free tier allows 1 request/second; we stay comfortably under it.
     aerodatabox_min_seconds_between_calls: float = 1.5
@@ -70,6 +74,13 @@ class Settings(BaseSettings):
     # Prepended to every outgoing email subject, so alerts are easy to spot
     # and to filter on in Gmail. Set empty to disable.
     email_subject_prefix: str = "PFT"
+
+    @field_validator("aerodatabox_quota_reset_day")
+    @classmethod
+    def _valid_day(cls, v: int) -> int:
+        if not 1 <= v <= 31:
+            raise ValueError("AERODATABOX_QUOTA_RESET_DAY must be between 1 and 31")
+        return v
 
     @field_validator("log_level")
     @classmethod
