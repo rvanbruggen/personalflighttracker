@@ -170,6 +170,43 @@ check("inbox copy addressed to the user", sends[0][1] == "rik@example.com", send
 check("IFTTT copy addressed to the trigger", sends[1][1] == "trigger@applet.ifttt.com", sends[1][1])
 check("IFTTT subject carries the hashtag", sends[1][2].endswith("#flight"), sends[1][2])
 check("inbox subject has no hashtag noise", "#flight" not in sends[0][2], sends[0][2])
+check("inbox subject starts with PFT", sends[0][2].startswith("PFT "), sends[0][2])
+check("IFTTT subject starts with PFT", sends[1][2].startswith("PFT "), sends[1][2])
+check("prefix precedes the flight number",
+      sends[0][2].startswith("PFT KL1705"), sends[0][2])
+
+print("\n4b. Subject prefix is idempotent and configurable")
+sent.clear()
+smtplib.SMTP = FakeSMTP
+try:
+    notify.send_alert("PFT KL1705 already prefixed", "body")
+finally:
+    smtplib.SMTP = original_smtp
+check("not double-prefixed",
+      [e for e in sent if e[0] == "send"][0][2].count("PFT") == 1,
+      [e for e in sent if e[0] == "send"][0][2])
+
+settings.email_subject_prefix = ""
+sent.clear()
+smtplib.SMTP = FakeSMTP
+try:
+    notify.send_alert("KL1705 no prefix wanted", "body")
+finally:
+    smtplib.SMTP = original_smtp
+check("empty prefix disables it",
+      [e for e in sent if e[0] == "send"][0][2] == "KL1705 no prefix wanted",
+      [e for e in sent if e[0] == "send"][0][2])
+settings.email_subject_prefix = "PFT"
+
+sent.clear()
+smtplib.SMTP = FakeSMTP
+try:
+    notify.send_test_alert()
+finally:
+    smtplib.SMTP = original_smtp
+check("test alert is prefixed too",
+      [e for e in sent if e[0] == "send"][0][2].startswith("PFT "),
+      [e for e in sent if e[0] == "send"][0][2])
 check("both report success", result.inbox_sent and result.ifttt_sent and result.ok)
 
 print("\n5. Hashtag is not duplicated if already present")

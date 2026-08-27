@@ -30,6 +30,16 @@ class NotifyResult:
         return not self.error
 
 
+def with_prefix(subject: str) -> str:
+    """'KL1705 DELAYED' -> 'PFT KL1705 DELAYED'. Idempotent."""
+    prefix = settings.email_subject_prefix.strip()
+    if not prefix:
+        return subject
+    if subject.strip().upper().startswith(prefix.upper()):
+        return subject
+    return f"{prefix} {subject}"
+
+
 def _build(to_address: str, subject: str, body: str) -> EmailMessage:
     message = EmailMessage()
     message["From"] = settings.effective_mail_from
@@ -59,13 +69,14 @@ def send_alert(subject: str, body: str, ifttt_subject: Optional[str] = None) -> 
         log.warning("Skipping alert %r: %s", subject, result.error)
         return result
 
+    subject = with_prefix(subject)
     messages: list[tuple[str, EmailMessage]] = [
         ("inbox", _build(settings.effective_mail_to, subject, body))
     ]
 
     if settings.ifttt_enabled and settings.ifttt_trigger_email:
         tag = settings.ifttt_hashtag.strip()
-        trigger_subject = ifttt_subject or subject
+        trigger_subject = with_prefix(ifttt_subject) if ifttt_subject else subject
         if tag and tag.lower() not in trigger_subject.lower():
             trigger_subject = f"{trigger_subject} {tag}"
         messages.append(
@@ -111,7 +122,7 @@ def send_alert(subject: str, body: str, ifttt_subject: Optional[str] = None) -> 
 
 def send_test_alert() -> NotifyResult:
     return send_alert(
-        subject=f"[{settings.app_name}] test alert",
+        subject="test alert",
         body=(
             "This is a test alert from your Personal Flight Tracker.\n\n"
             "If this landed in your inbox, Gmail SMTP works.\n"

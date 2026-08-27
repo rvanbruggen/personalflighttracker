@@ -13,7 +13,7 @@ class Settings(BaseSettings):
 
     # --- App ---
     app_name: str = "Personal Flight Tracker"
-    app_version: str = "0.2.0"
+    app_version: str = "0.2.1"
     timezone: str = "Europe/Brussels"  # used for rendering local times in the UI
     database_url: str = "sqlite:///./data/flights.db"
     log_level: str = "INFO"
@@ -67,6 +67,9 @@ class Settings(BaseSettings):
     ifttt_hashtag: str = "#flight"
 
     notifications_enabled: bool = True
+    # Prepended to every outgoing email subject, so alerts are easy to spot
+    # and to filter on in Gmail. Set empty to disable.
+    email_subject_prefix: str = "PFT"
 
     @field_validator("log_level")
     @classmethod

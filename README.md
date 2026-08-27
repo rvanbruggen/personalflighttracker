@@ -140,6 +140,13 @@ history but stay silent.
 The app never treats *missing* data as a change — providers drop fields
 intermittently, and that shouldn't wake your phone at 4am.
 
+Every alert subject is prefixed with `PFT`, so they are easy to spot and to
+filter on in Gmail:
+
+```
+PFT KL1705 AMS→LIS DELAYED +45min
+```
+
 ---
 
 ## The live map
@@ -191,6 +198,7 @@ The ones worth knowing:
 | `IFTTT_ENABLED` | `true` | Set `false` to skip the phone-notification copy. |
 | `IFTTT_HASHTAG` | `#flight` | Must match your applet's tag. |
 | `NOTIFICATIONS_ENABLED` | `true` | `false` records changes silently — handy for testing. |
+| `EMAIL_SUBJECT_PREFIX` | `PFT` | Prepended to every email subject. Empty for none. |
 | `POLL_*` | see table above | Status cadence tuning. |
 | `POSITIONS_ENABLED` | `true` | `false` disables the map and position polling. |
 | `ADSBLOL_CONTACT` | project URL | Contact point adsb.lol requires; 403 without it. |
