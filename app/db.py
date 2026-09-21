@@ -49,6 +49,9 @@ class Flight(Base):
     # Departure date (local to the origin airport), ISO yyyy-mm-dd
     flight_date: Mapped[str] = mapped_column(String(10), index=True)
     label: Mapped[str] = mapped_column(String(200), default="")
+    # Extra alert recipients, comma-separated and normalised. The default
+    # address (MAIL_TO / SMTP_USER) is implicit and never stored here.
+    notify_emails: Mapped[str] = mapped_column(Text, default="")
 
     # Lifecycle: active | completed | abandoned
     tracking_state: Mapped[str] = mapped_column(String(16), default="active", index=True)
@@ -208,6 +211,7 @@ _ADDED_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("last_position_at", "DATETIME"),
         ("next_position_poll_at", "DATETIME"),
         ("position_error", "TEXT DEFAULT ''"),
+        ("notify_emails", "TEXT DEFAULT ''"),
     ],
 }
 

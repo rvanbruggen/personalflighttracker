@@ -17,6 +17,14 @@ from fastapi.templating import Jinja2Templates
 
 from .config import settings
 from .callsign import resolve_callsign
+from .recipients import (
+    MAX_EXTRA_RECIPIENTS,
+    all_recipients,
+    default_recipient,
+    extra_recipients,
+    parse_recipients,
+    serialise,
+)
 from .db import Flight, FlightEvent, SessionLocal, init_db, utcnow
 from .notify import send_test_alert
 from .providers.aerodatabox import provider as status_provider
@@ -149,6 +157,10 @@ async def index(request: Request, msg: str = "", level: str = "ok"):
             "flights": flights,
             "recent": recent,
             "flights_by_id": events_by_flight,
+            "recipient_counts": {
+                flight.id: len(extra_recipients(flight.notify_emails)) for flight in flights
+            },
+            "default_recipient": default_recipient(),
             "quota": quota_status(),
             "settings": settings,
             "today": datetime.now(timezone.utc).date().isoformat(),
@@ -165,6 +177,7 @@ async def register_flight(
     flight_number: str = Form(...),
     flight_date: str = Form(...),
     label: str = Form(""),
+    notify_emails: str = Form(""),
 ):
     number = normalise_flight_number(flight_number)
     if not FLIGHT_NUMBER_RE.match(number):
@@ -175,6 +188,12 @@ async def register_flight(
         iso_date = validate_date(flight_date)
     except ValueError as exc:
         return _flash(request, "/", str(exc), "error")
+
+    recipients = parse_recipients(notify_emails)
+    if recipients.error:
+        # Reject the whole registration rather than silently drop an address
+        # someone expected to be alerted.
+        return _flash(request, "/", recipients.error, "error")
 
     with SessionLocal() as session:
         existing = (
@@ -190,6 +209,7 @@ async def register_flight(
             flight_number=number,
             flight_date=iso_date,
             label=(label or "").strip()[:200],
+            notify_emails=serialise(recipients.emails),
             next_poll_at=utcnow().replace(tzinfo=None),
         )
         session.add(flight)
@@ -199,7 +219,10 @@ async def register_flight(
     # First poll immediately, so the user sees a result right away.
     outcome = await poll_flight(flight_id)
     log.info("Registered %s on %s: %s", number, iso_date, outcome)
-    return _flash(request, f"/flights/{flight_id}", f"Tracking {number} — {outcome}.", "ok")
+    extra = f" Alerts also go to {len(recipients.emails)} other address(es)." if recipients.emails else ""
+    return _flash(
+        request, f"/flights/{flight_id}", f"Tracking {number} — {outcome}.{extra}", "ok"
+    )
 
 
 @app.get("/flights/{flight_id}", response_class=HTMLResponse)
@@ -219,6 +242,9 @@ async def flight_detail(request: Request, flight_id: int, msg: str = "", level: 
             "events": events,
             "callsign": resolved,
             "positions_enabled": settings.positions_enabled,
+            "default_recipient": default_recipient(),
+            "extra_recipients": extra_recipients(flight.notify_emails),
+            "max_recipients": MAX_EXTRA_RECIPIENTS,
             "settings": settings,
             "quota": quota_status(),
             "message": msg,
@@ -232,6 +258,58 @@ async def flight_detail(request: Request, flight_id: int, msg: str = "", level: 
 async def refresh_flight(request: Request, flight_id: int):
     outcome = await poll_flight(flight_id, force=True)
     return _flash(request, f"/flights/{flight_id}", f"Refreshed — {outcome}.", "ok")
+
+
+@app.post("/flights/{flight_id}/recipients")
+async def update_recipients(request: Request, flight_id: int, notify_emails: str = Form("")):
+    """Replace this flight's extra recipients with the submitted list."""
+    url = f"/flights/{flight_id}"
+    recipients = parse_recipients(notify_emails)
+    if recipients.error:
+        return _flash(request, url, recipients.error, "error")
+
+    with SessionLocal() as session:
+        flight = session.get(Flight, flight_id)
+        if flight is None:
+            raise HTTPException(status_code=404, detail="Flight not tracked")
+        before = set(extra_recipients(flight.notify_emails))
+        flight.notify_emails = serialise(recipients.emails)
+        after = set(recipients.emails)
+        added, removed = sorted(after - before), sorted(before - after)
+        if added or removed:
+            bits = []
+            if added:
+                bits.append("added " + ", ".join(added))
+            if removed:
+                bits.append("removed " + ", ".join(removed))
+            session.add(
+                FlightEvent(flight_id=flight.id, kind="info",
+                            summary="Recipients updated", detail="; ".join(bits))
+            )
+        session.commit()
+
+    if not (added or removed):
+        return _flash(request, url, "Recipients unchanged.", "ok")
+    note = " (Your default address always receives alerts, so it isn't listed.)" if recipients.dropped_default else ""
+    return _flash(request, url, f"Recipients updated: {len(after)} extra.{note}", "ok")
+
+
+@app.post("/flights/{flight_id}/recipients/remove")
+async def remove_recipient(request: Request, flight_id: int, email: str = Form(...)):
+    url = f"/flights/{flight_id}"
+    target = (email or "").strip().lower()
+    with SessionLocal() as session:
+        flight = session.get(Flight, flight_id)
+        if flight is None:
+            raise HTTPException(status_code=404, detail="Flight not tracked")
+        current = extra_recipients(flight.notify_emails)
+        if target not in current:
+            return _flash(request, url, f"{target} was not a recipient.", "warn")
+        flight.notify_emails = serialise([e for e in current if e != target])
+        session.add(FlightEvent(flight_id=flight.id, kind="info",
+                                summary="Recipients updated", detail=f"removed {target}"))
+        session.commit()
+    return _flash(request, url, f"Removed {target}.", "ok")
 
 
 @app.post("/flights/{flight_id}/delete")
@@ -374,6 +452,7 @@ async def api_flights():
                     if flight.next_poll_at
                     else None,
                     "last_error": flight.last_error,
+                    "recipients": all_recipients(flight.notify_emails),
                 }
                 for flight in flights
             ]

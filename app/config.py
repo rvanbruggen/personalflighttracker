@@ -13,7 +13,7 @@ class Settings(BaseSettings):
 
     # --- App ---
     app_name: str = "Personal Flight Tracker"
-    app_version: str = "0.2.2"
+    app_version: str = "0.3.0"
     timezone: str = "Europe/Brussels"  # used for rendering local times in the UI
     database_url: str = "sqlite:///./data/flights.db"
     log_level: str = "INFO"

@@ -83,6 +83,36 @@
   {% endif %}
 </section>
 
+<section class="card">
+  <h2>Notifications</h2>
+  <ul class="recipients">
+    <li>
+      <span>{{ default_recipient or "— no default address configured —" }}</span>
+      <span class="hint">default · always notified</span>
+    </li>
+    {% for email in extra_recipients %}
+    <li>
+      <span>{{ email }}</span>
+      <form method="post" action="/flights/{{ flight.id }}/recipients/remove" class="inline"
+            onsubmit="return confirm('Stop sending alerts for this flight to {{ email }}?')">
+        <input type="hidden" name="email" value="{{ email }}">
+        <button class="link danger" title="Remove {{ email }}">✕</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  <form method="post" action="/flights/{{ flight.id }}/recipients" class="recipient-form">
+    <label class="grow">
+      Extra recipients <span class="hint">(comma-separated, up to {{ max_recipients }})</span>
+      <input name="notify_emails" type="text" inputmode="email" autocomplete="off"
+             value="{{ extra_recipients|join(', ') }}"
+             placeholder="anna@example.com, bob@example.com">
+    </label>
+    <button type="submit">Save</button>
+  </form>
+  <p class="hint">Each person gets their own copy, so nobody sees anyone else's address.</p>
+</section>
+
 {% if positions_enabled %}
 <section>
   <h2>Live position</h2>

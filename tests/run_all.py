@@ -10,6 +10,7 @@ MODULES = [
     "test_e2e.py",
     "test_alerts_and_quota.py",
     "test_positions.py",
+    "test_recipients.py",
 ]
 
 failed = []

@@ -10,9 +10,9 @@ from __future__ import annotations
 import logging
 import smtplib
 import ssl
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from email.message import EmailMessage
-from typing import Optional
+from typing import Optional, Sequence
 
 from .config import settings
 
@@ -23,6 +23,8 @@ log = logging.getLogger(__name__)
 class NotifyResult:
     inbox_sent: bool = False
     ifttt_sent: bool = False
+    extra_sent: list[str] = field(default_factory=list)
+    extra_failed: list[str] = field(default_factory=list)
     error: str = ""
 
     @property
@@ -49,11 +51,25 @@ def _build(to_address: str, subject: str, body: str) -> EmailMessage:
     return message
 
 
-def send_alert(subject: str, body: str, ifttt_subject: Optional[str] = None) -> NotifyResult:
+EXTRA_RECIPIENT_FOOTER = (
+    "\n\n--\nYou are receiving this because you were added as a recipient "
+    "for this flight on {app}. Ask the person tracking it to remove you."
+)
+
+
+def send_alert(
+    subject: str,
+    body: str,
+    ifttt_subject: Optional[str] = None,
+    extra_recipients: Sequence[str] = (),
+) -> NotifyResult:
     """Blocking — call from a worker thread, not the event loop.
 
     `subject` goes to your inbox; `ifttt_subject` (hashtag appended) goes to
     IFTTT. IFTTT matches on the hashtag, so keep it in the subject line.
+
+    Each of `extra_recipients` gets an individual copy, so nobody sees anyone
+    else's address and one bad address cannot block the others.
     """
     result = NotifyResult()
 
@@ -73,6 +89,11 @@ def send_alert(subject: str, body: str, ifttt_subject: Optional[str] = None) -> 
     messages: list[tuple[str, EmailMessage]] = [
         ("inbox", _build(settings.effective_mail_to, subject, body))
     ]
+    default = settings.effective_mail_to.strip().lower()
+    extra_body = body + EXTRA_RECIPIENT_FOOTER.format(app=settings.app_name)
+    for address in dict.fromkeys(a.strip().lower() for a in extra_recipients):
+        if address and address != default:
+            messages.append((f"extra:{address}", _build(address, subject, extra_body)))
 
     if settings.ifttt_enabled and settings.ifttt_trigger_email:
         tag = settings.ifttt_hashtag.strip()
@@ -95,11 +116,18 @@ def send_alert(subject: str, body: str, ifttt_subject: Optional[str] = None) -> 
                     server.send_message(message)
                     if kind == "inbox":
                         result.inbox_sent = True
-                    else:
+                    elif kind == "ifttt":
                         result.ifttt_sent = True
+                    else:
+                        result.extra_sent.append(kind.split(":", 1)[1])
                 except smtplib.SMTPException as exc:
                     log.error("Failed to send %s copy: %s", kind, exc)
-                    result.error = f"{kind} copy failed: {exc}"
+                    if kind.startswith("extra:"):
+                        # A bad extra address is reported, not treated as a
+                        # failure of the whole alert.
+                        result.extra_failed.append(kind.split(":", 1)[1])
+                    else:
+                        result.error = f"{kind} copy failed: {exc}"
     except smtplib.SMTPAuthenticationError as exc:
         result.error = (
             "Gmail rejected the login. Use a 16-character app password "
@@ -110,11 +138,13 @@ def send_alert(subject: str, body: str, ifttt_subject: Optional[str] = None) -> 
         result.error = f"SMTP error: {exc}"
         log.error("SMTP failure sending %r: %s", subject, exc)
 
-    if result.inbox_sent or result.ifttt_sent:
+    if result.inbox_sent or result.ifttt_sent or result.extra_sent:
         log.info(
-            "Alert sent (inbox=%s ifttt=%s): %s",
+            "Alert sent (inbox=%s ifttt=%s extra=%d failed=%d): %s",
             result.inbox_sent,
             result.ifttt_sent,
+            len(result.extra_sent),
+            len(result.extra_failed),
             subject,
         )
     return result

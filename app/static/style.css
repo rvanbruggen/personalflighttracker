@@ -191,3 +191,18 @@ s { color: var(--muted); }
 .map-status { color: var(--muted); font-size: 12px; }
 .map-status-ok { color: var(--ok); }
 .map-status-warn { color: var(--warn); }
+
+/* --- Per-flight recipients --- */
+.register .full { flex-basis: 100%; }
+ul.recipients { list-style: none; padding: 0; margin: 0 0 14px; }
+ul.recipients li {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px;
+  word-break: break-all;
+}
+ul.recipients li:last-child { border-bottom: 0; }
+.recipient-form { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+.recipient-form label {
+  display: flex; flex-direction: column; gap: 5px; font-size: 12px;
+  color: var(--muted); flex: 1; min-width: 220px;
+}

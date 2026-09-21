@@ -156,6 +156,24 @@ history but stay silent.
 The app never treats *missing* data as a change — providers drop fields
 intermittently, and that shouldn't wake your phone at 4am.
 
+### Who gets notified
+
+Your default address — `MAIL_TO`, or `SMTP_USER` if that's empty — receives
+every alert for every flight. It can't be removed from a flight.
+
+On top of that, each flight can have up to 10 **extra recipients**: fill in
+*Also notify* when registering, or edit the list later in the *Notifications*
+panel on the flight's page. Addresses are comma-separated, and case and
+duplicates don't matter.
+
+- Each person gets **their own copy**, so nobody sees anyone else's address,
+  and one bad address can't block delivery to the others.
+- Extra recipients' copies end with a short note explaining why they are
+  receiving it.
+- The flight's change history records exactly who each alert reached, and
+  logs whenever recipients are added or removed.
+- The test alert only ever goes to the default address.
+
 Every alert subject is prefixed with `PFT`, so they are easy to spot and to
 filter on in Gmail:
 
@@ -229,7 +247,7 @@ The ones worth knowing:
 | `GET /` | Registration form + tracked flights |
 | `GET /flights/{id}` | One flight: current state, change history, raw provider JSON |
 | `GET /healthz` | Config + scheduler + quota status |
-| `GET /api/flights` | JSON list of tracked flights |
+| `GET /api/flights` | JSON list of tracked flights, including each one's recipients |
 | `GET /api/flights/{id}/track` | Trail, endpoints, and latest fix — what the map consumes |
 
 ## Development
@@ -246,6 +264,12 @@ send real email, so they cost no quota:
 ```bash
 .venv/bin/python tests/run_all.py
 ```
+
+### Upgrading
+
+The app migrates SQLite automatically on startup, so upgrading is always
+`git pull && docker compose up -d --build`. Existing flights keep their data;
+new columns start empty. The log line `Schema migrated — added: …` confirms it.
 
 ### Upgrading from v0.1.0
 
@@ -265,6 +289,7 @@ app/
   db.py           SQLite models (flights, events, api_calls)
   config.py       .env-backed settings
   callsign.py     Callsign resolution, with ICAO-derivation fallback
+  recipients.py   Per-flight extra recipients: parsing and validation
   static/map.js   Leaflet map: trail, route, aircraft marker
   providers/
     base.py       FlightSnapshot / PositionFix + the provider interfaces

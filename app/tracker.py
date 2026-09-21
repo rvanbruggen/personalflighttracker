@@ -28,7 +28,8 @@ from .db import (
     utcnow,
 )
 from .diffing import apply_snapshot, delay_minutes, diff_snapshot, summarise
-from .notify import send_alert
+from .notify import NotifyResult, send_alert
+from .recipients import extra_recipients
 from .providers.adsblol import provider as position_provider
 from .providers.aerodatabox import provider as status_provider
 from .providers.base import (
@@ -131,8 +132,11 @@ def quota_status() -> dict:
     }
 
 
-def _notify(flight: Flight, snapshot: FlightSnapshot, changes: list, subject: str) -> bool:
-    """Compose and send the alert. Returns True if anything went out."""
+def _notify(
+    flight: Flight, snapshot: FlightSnapshot, changes: list, subject: str
+) -> NotifyResult:
+    """Compose and send the alert to the default address plus this flight's
+    extra recipients."""
     lines = [
         f"{flight.flight_number}"
         + (f" ({flight.airline})" if flight.airline else "")
@@ -170,10 +174,37 @@ def _notify(flight: Flight, snapshot: FlightSnapshot, changes: list, subject: st
     if flight.label:
         lines += ["", f"Note: {flight.label}"]
 
-    result = send_alert(subject=subject, body="\n".join(lines), ifttt_subject=subject)
+    result = send_alert(
+        subject=subject,
+        body="\n".join(lines),
+        ifttt_subject=subject,
+        extra_recipients=extra_recipients(flight.notify_emails),
+    )
     if result.error:
         log.warning("Alert for %s not fully delivered: %s", flight.flight_number, result.error)
-    return result.inbox_sent or result.ifttt_sent
+    if result.extra_failed:
+        log.warning(
+            "Alert for %s could not reach: %s",
+            flight.flight_number,
+            ", ".join(result.extra_failed),
+        )
+    return result
+
+
+def _delivery_note(result: NotifyResult) -> str:
+    """One line for the change history: who actually got this alert."""
+    reached = []
+    if result.inbox_sent:
+        reached.append(settings.effective_mail_to)
+    reached += result.extra_sent
+    parts = []
+    if reached:
+        parts.append("Sent to: " + ", ".join(reached))
+    if result.extra_failed:
+        parts.append("Failed: " + ", ".join(result.extra_failed))
+    if result.error and not reached:
+        parts.append(f"Not sent: {result.error}")
+    return "\n".join(parts)
 
 
 async def poll_flight(flight_id: int, *, force: bool = False) -> str:
@@ -279,9 +310,15 @@ async def poll_flight(flight_id: int, *, force: bool = False) -> str:
             significant = any(change.significant for change in changes)
             notified = False
             if significant:
-                notified = await asyncio.to_thread(
+                result = await asyncio.to_thread(
                     _notify, flight, snapshot, changes, subject
                 )
+                notified = bool(
+                    result.inbox_sent or result.ifttt_sent or result.extra_sent
+                )
+                note = _delivery_note(result)
+                if note:
+                    detail = f"{detail}\n{note}"
             session.add(
                 FlightEvent(
                     flight_id=flight.id,

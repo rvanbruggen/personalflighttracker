@@ -27,8 +27,10 @@ SENT: list[tuple[str, str]] = []
 
 
 def fake_notify(flight, snapshot, changes, subject):
+    from app.notify import NotifyResult
+
     SENT.append((subject, "\n".join(c.as_line() for c in changes)))
-    return True
+    return NotifyResult(inbox_sent=True)
 
 
 tracker._notify = fake_notify

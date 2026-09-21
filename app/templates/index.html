@@ -17,6 +17,12 @@
       Note <span class="hint">(optional)</span>
       <input name="label" placeholder="Rik → Lisbon, conference" autocomplete="off">
     </label>
+    <label class="full">
+      Also notify <span class="hint">(optional, comma-separated — alerts always go to
+      {{ default_recipient or "your default address" }} too)</span>
+      <input name="notify_emails" type="text" inputmode="email" autocomplete="off"
+             placeholder="anna@example.com, bob@example.com">
+    </label>
     <button type="submit">Track it</button>
   </form>
   <p class="hint">
@@ -43,6 +49,8 @@
         <td>
           <a href="/flights/{{ flight.id }}"><strong>{{ flight.flight_number }}</strong></a>
           {% if flight.label %}<div class="hint">{{ flight.label }}</div>{% endif %}
+          {% set extras = recipient_counts.get(flight.id, 0) %}
+          {% if extras %}<div class="hint">✉︎ +{{ extras }} recipient{{ "s" if extras != 1 }}</div>{% endif %}
         </td>
         <td>{{ flight.flight_date }}</td>
         <td>{{ flight.route }}</td>
