@@ -174,6 +174,16 @@ duplicates don't matter.
   logs whenever recipients are added or removed.
 - The test alert only ever goes to the default address.
 
+**Confirmation emails.** When you register a flight, everyone on it gets a
+*tracking started* email with the flight's current details and what alerts to
+expect — so nobody's first message is an unexplained delay alert. Anyone you
+add to a flight later gets a *you've been added* email; people already on the
+list don't hear about it again. Removing someone sends nothing.
+
+Confirmations reuse the poll that registration already makes, so they cost no
+API quota, and they never go to IFTTT, which stays reserved for real changes.
+Turn them off with `SEND_TRACKING_CONFIRMATIONS=false`.
+
 Every alert subject is prefixed with `PFT`, so they are easy to spot and to
 filter on in Gmail:
 
@@ -234,6 +244,7 @@ The ones worth knowing:
 | `IFTTT_HASHTAG` | `#flight` | Must match your applet's tag. |
 | `NOTIFICATIONS_ENABLED` | `true` | `false` records changes silently — handy for testing. |
 | `EMAIL_SUBJECT_PREFIX` | `PFT` | Prepended to every email subject. Empty for none. |
+| `SEND_TRACKING_CONFIRMATIONS` | `true` | "Tracking started" / "you've been added" emails. |
 | `POLL_*` | see table above | Status cadence tuning. |
 | `POSITIONS_ENABLED` | `true` | `false` disables the map and position polling. |
 | `ADSBLOL_CONTACT` | project URL | Contact point adsb.lol requires; 403 without it. |

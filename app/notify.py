@@ -62,6 +62,9 @@ def send_alert(
     body: str,
     ifttt_subject: Optional[str] = None,
     extra_recipients: Sequence[str] = (),
+    *,
+    include_default: bool = True,
+    include_ifttt: bool = True,
 ) -> NotifyResult:
     """Blocking — call from a worker thread, not the event loop.
 
@@ -70,6 +73,9 @@ def send_alert(
 
     Each of `extra_recipients` gets an individual copy, so nobody sees anyone
     else's address and one bad address cannot block the others.
+
+    `include_default=False` sends only to the extras (e.g. welcoming someone
+    added later); `include_ifttt=False` keeps a message off the phone.
     """
     result = NotifyResult()
 
@@ -86,16 +92,16 @@ def send_alert(
         return result
 
     subject = with_prefix(subject)
-    messages: list[tuple[str, EmailMessage]] = [
-        ("inbox", _build(settings.effective_mail_to, subject, body))
-    ]
+    messages: list[tuple[str, EmailMessage]] = []
+    if include_default:
+        messages.append(("inbox", _build(settings.effective_mail_to, subject, body)))
     default = settings.effective_mail_to.strip().lower()
     extra_body = body + EXTRA_RECIPIENT_FOOTER.format(app=settings.app_name)
     for address in dict.fromkeys(a.strip().lower() for a in extra_recipients):
         if address and address != default:
             messages.append((f"extra:{address}", _build(address, subject, extra_body)))
 
-    if settings.ifttt_enabled and settings.ifttt_trigger_email:
+    if include_ifttt and settings.ifttt_enabled and settings.ifttt_trigger_email:
         tag = settings.ifttt_hashtag.strip()
         trigger_subject = with_prefix(ifttt_subject) if ifttt_subject else subject
         if tag and tag.lower() not in trigger_subject.lower():
@@ -103,6 +109,9 @@ def send_alert(
         messages.append(
             ("ifttt", _build(settings.ifttt_trigger_email, trigger_subject, body))
         )
+
+    if not messages:
+        return result  # nothing to send is not an error
 
     context = ssl.create_default_context()
     try:

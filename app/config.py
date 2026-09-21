@@ -13,7 +13,7 @@ class Settings(BaseSettings):
 
     # --- App ---
     app_name: str = "Personal Flight Tracker"
-    app_version: str = "0.3.0"
+    app_version: str = "0.4.0"
     timezone: str = "Europe/Brussels"  # used for rendering local times in the UI
     database_url: str = "sqlite:///./data/flights.db"
     log_level: str = "INFO"
@@ -71,6 +71,9 @@ class Settings(BaseSettings):
     ifttt_hashtag: str = "#flight"
 
     notifications_enabled: bool = True
+    # Email everyone on a flight when tracking starts, and anyone added to a
+    # flight later, so the first message they see isn't a surprise delay alert.
+    send_tracking_confirmations: bool = True
     # Prepended to every outgoing email subject, so alerts are easy to spot
     # and to filter on in Gmail. Set empty to disable.
     email_subject_prefix: str = "PFT"

@@ -535,3 +535,110 @@ async def position_tick() -> int:
         except Exception:  # noqa: BLE001
             log.exception("Unhandled error polling position for id=%s", flight_id)
     return len(due_ids)
+
+
+# --------------------------------------------------------- tracking started
+
+
+def _confirmation_message(flight: Flight, welcome: bool) -> tuple[str, str]:
+    """Subject and body for 'tracking started' / 'you've been added'."""
+    route = f" {flight.dep_iata}→{flight.arr_iata}" if flight.dep_iata and flight.arr_iata else ""
+    subject = (
+        f"{flight.flight_number}{route} alerts: you've been added"
+        if welcome
+        else f"{flight.flight_number}{route} tracking started"
+    )
+
+    lines = [
+        f"{flight.flight_number}"
+        + (f" ({flight.airline})" if flight.airline else "")
+        + f"  {flight.flight_date}",
+    ]
+    if flight.dep_iata or flight.arr_iata:
+        lines.append(
+            f"{flight.dep_name or flight.dep_iata or '?'} → "
+            f"{flight.arr_name or flight.arr_iata or '?'}"
+        )
+    lines += [
+        "",
+        "You've been added to the alerts for this flight."
+        if welcome
+        else "This flight is now being tracked.",
+        "",
+    ]
+
+    if flight.status or flight.dep_scheduled_local:
+        lines.append("Current state:")
+        lines.append(f"  Status: {flight.status or 'unknown'}")
+        if flight.dep_scheduled_local:
+            lines.append(f"  Departure (local): {flight.dep_scheduled_local}")
+        if flight.dep_actual_local and flight.dep_actual_local != flight.dep_scheduled_local:
+            lines.append(f"  Departure expected/actual: {flight.dep_actual_local}")
+        if flight.dep_terminal or flight.dep_gate:
+            lines.append(
+                f"  Departure terminal/gate: {flight.dep_terminal or '—'} / "
+                f"{flight.dep_gate or '—'}"
+            )
+        if flight.arr_scheduled_local:
+            lines.append(f"  Arrival (local): {flight.arr_scheduled_local}")
+        lines.append("")
+    else:
+        lines += [
+            "Flight details aren't available from the data provider yet —",
+            "you'll get an email as soon as they are.",
+            "",
+        ]
+
+    lines += [
+        "You'll get an email whenever the status, departure gate or terminal",
+        "changes, or the times shift by more than a couple of minutes, until",
+        "the flight lands.",
+    ]
+    if flight.label:
+        lines += ["", f"Note: {flight.label}"]
+    return subject, "\n".join(lines)
+
+
+def send_tracking_confirmation(
+    flight_id: int, new_recipients: Optional[list[str]] = None
+) -> Optional[NotifyResult]:
+    """Blocking. With no `new_recipients`, confirm to everyone on the flight
+    (registration). With a list, welcome only those people (added later).
+
+    Uses the flight's stored state, so it costs no API quota. Returns None
+    when confirmations are switched off or there is no one to send to.
+    """
+    if not settings.send_tracking_confirmations:
+        return None
+
+    with SessionLocal() as session:
+        flight = session.get(Flight, flight_id)
+        if flight is None:
+            return None
+        welcome = new_recipients is not None
+        if welcome and not new_recipients:
+            return None
+
+        subject, body = _confirmation_message(flight, welcome)
+        result = send_alert(
+            subject=subject,
+            body=body,
+            extra_recipients=new_recipients if welcome else extra_recipients(flight.notify_emails),
+            include_default=not welcome,
+            include_ifttt=False,  # phone pushes are for real changes only
+        )
+
+        note = _delivery_note(result) or "Not sent: nothing to send"
+        session.add(
+            FlightEvent(
+                flight_id=flight.id,
+                kind="info",
+                summary="Welcome email to new recipients"
+                if welcome
+                else "Tracking confirmation email",
+                detail=note,
+                notified=bool(result.inbox_sent or result.extra_sent),
+            )
+        )
+        session.commit()
+    return result

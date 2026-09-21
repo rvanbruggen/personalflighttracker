@@ -34,6 +34,7 @@ from .tracker import (
     poll_position,
     position_tick,
     quota_status,
+    send_tracking_confirmation,
     tick,
 )
 
@@ -220,9 +221,26 @@ async def register_flight(
     outcome = await poll_flight(flight_id)
     log.info("Registered %s on %s: %s", number, iso_date, outcome)
     extra = f" Alerts also go to {len(recipients.emails)} other address(es)." if recipients.emails else ""
+    confirmation = await asyncio.to_thread(send_tracking_confirmation, flight_id)
     return _flash(
-        request, f"/flights/{flight_id}", f"Tracking {number} — {outcome}.{extra}", "ok"
+        request,
+        f"/flights/{flight_id}",
+        f"Tracking {number} — {outcome}.{extra}{_confirmation_note(confirmation)}",
+        "ok",
     )
+
+
+def _confirmation_note(result) -> str:
+    """Flash-message suffix describing the confirmation email, if any."""
+    if result is None:
+        return ""
+    reached = (1 if result.inbox_sent else 0) + len(result.extra_sent)
+    if reached:
+        failed = f", {len(result.extra_failed)} failed" if result.extra_failed else ""
+        return f" Confirmation emailed to {reached} address(es){failed}."
+    if result.error:
+        return f" Confirmation not sent: {result.error}"
+    return ""
 
 
 @app.get("/flights/{flight_id}", response_class=HTMLResponse)
@@ -291,7 +309,18 @@ async def update_recipients(request: Request, flight_id: int, notify_emails: str
     if not (added or removed):
         return _flash(request, url, "Recipients unchanged.", "ok")
     note = " (Your default address always receives alerts, so it isn't listed.)" if recipients.dropped_default else ""
-    return _flash(request, url, f"Recipients updated: {len(after)} extra.{note}", "ok")
+    # Only the newly added people get a welcome; everyone else already knows.
+    welcome = (
+        await asyncio.to_thread(send_tracking_confirmation, flight_id, added)
+        if added
+        else None
+    )
+    return _flash(
+        request,
+        url,
+        f"Recipients updated: {len(after)} extra.{note}{_confirmation_note(welcome)}",
+        "ok",
+    )
 
 
 @app.post("/flights/{flight_id}/recipients/remove")

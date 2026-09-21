@@ -102,7 +102,9 @@ with SessionLocal() as s:
     check("gate stored", flight.dep_gate == "D5")
     check("callsign captured for phase 2", flight.callsign == "KLM1234")
     check("no alert on first poll", len(SENT) == 0)
-    check("event logged as 'registered'", flight.events[0].kind == "registered")
+    check("event logged as 'registered'", any(e.kind == "registered" for e in flight.events))
+    check("tracking confirmation logged alongside it",
+          any(e.summary == "Tracking confirmation email" for e in flight.events))
     next_poll = flight.next_poll_at
     hours_out = (next_poll - datetime.now(timezone.utc).replace(tzinfo=None)).total_seconds() / 3600
     check("30h out -> next poll ~6h away (at the 24h mark)", 5.5 < hours_out < 6.5,
