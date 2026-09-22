@@ -13,7 +13,7 @@ class Settings(BaseSettings):
 
     # --- App ---
     app_name: str = "Personal Flight Tracker"
-    app_version: str = "0.4.0"
+    app_version: str = "0.5.0"
     timezone: str = "Europe/Brussels"  # used for rendering local times in the UI
     database_url: str = "sqlite:///./data/flights.db"
     log_level: str = "INFO"
@@ -65,15 +65,23 @@ class Settings(BaseSettings):
     mail_from: str = ""  # defaults to smtp_user
     mail_to: str = ""  # where readable alerts go; defaults to smtp_user
 
-    # --- Notifications: IFTTT Email trigger ---
+    # --- Notifications: IFTTT Webhooks (phone push; needs IFTTT Pro) ---
     ifttt_enabled: bool = True
-    ifttt_trigger_email: str = "trigger@applet.ifttt.com"
-    ifttt_hashtag: str = "#flight"
+    # The key from https://ifttt.com/maker_webhooks/settings (the part after
+    # /use/ in the URL shown there). Anyone holding it can fire your applets.
+    ifttt_webhook_key: str = ""
+    # Must match the event name in the applet's "Receive a web request" trigger.
+    ifttt_event: str = "flight_notification"
+    ifttt_timeout_seconds: float = 10.0
+    # This app's address as your phone reaches it, e.g. http://192.168.68.78:8080.
+    # Pushes carry a link to the flight page when set; empty leaves it out.
+    public_base_url: str = ""
 
     notifications_enabled: bool = True
     # Email everyone on a flight when tracking starts, and anyone added to a
     # flight later, so the first message they see isn't a surprise delay alert.
     send_tracking_confirmations: bool = True
+
     # Prepended to every outgoing email subject, so alerts are easy to spot
     # and to filter on in Gmail. Set empty to disable.
     email_subject_prefix: str = "PFT"
@@ -106,6 +114,15 @@ class Settings(BaseSettings):
     @property
     def smtp_configured(self) -> bool:
         return bool(self.smtp_user and self.smtp_password and self.effective_mail_to)
+
+    @property
+    def ifttt_configured(self) -> bool:
+        return bool(self.ifttt_enabled and self.ifttt_webhook_key and self.ifttt_event)
+
+    def app_link(self, path: str) -> str:
+        """Absolute link into the web UI, or "" without PUBLIC_BASE_URL."""
+        base = self.public_base_url.strip().rstrip("/")
+        return f"{base}{path}" if base else ""
 
     @property
     def aerodatabox_configured(self) -> bool:

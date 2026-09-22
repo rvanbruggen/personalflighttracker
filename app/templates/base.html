@@ -31,7 +31,7 @@
     <span>
       Status: AeroDataBox {{ "✓" if settings.aerodatabox_configured else "✗ no API key" }}
       · Gmail {{ "✓" if settings.smtp_configured else "✗ not configured" }}
-      · IFTTT {{ "✓" if settings.ifttt_enabled else "off" }}
+      · IFTTT push {{ "✓" if settings.ifttt_configured else "off" }}
     </span>
     <form method="post" action="/test-alert" class="inline">
       <button class="link" type="submit">send test alert</button>

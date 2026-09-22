@@ -29,6 +29,7 @@ from .db import (
 )
 from .diffing import apply_snapshot, delay_minutes, diff_snapshot, summarise
 from .notify import NotifyResult, send_alert
+from .push import PushMessage
 from .recipients import extra_recipients
 from .providers.adsblol import provider as position_provider
 from .providers.aerodatabox import provider as status_provider
@@ -133,7 +134,10 @@ def quota_status() -> dict:
 
 
 def _notify(
-    flight: Flight, snapshot: FlightSnapshot, changes: list, subject: str
+    flight: Flight,
+    snapshot: FlightSnapshot,
+    changes: list,
+    subject: str,
 ) -> NotifyResult:
     """Compose and send the alert to the default address plus this flight's
     extra recipients."""
@@ -174,14 +178,26 @@ def _notify(
     if flight.label:
         lines += ["", f"Note: {flight.label}"]
 
+    push_lines = [change.as_line() for change in changes]
+    if delay is not None and abs(delay) >= 1:
+        push_lines.append(f"Now {abs(delay)} min {'late' if delay > 0 else 'early'}")
+    if flight.label:
+        push_lines.append(flight.label)
+
     result = send_alert(
         subject=subject,
         body="\n".join(lines),
-        ifttt_subject=subject,
+        push=PushMessage(
+            title=subject,
+            message="\n".join(push_lines),
+            link=settings.app_link(f"/flights/{flight.id}"),
+        ),
         extra_recipients=extra_recipients(flight.notify_emails),
     )
     if result.error:
         log.warning("Alert for %s not fully delivered: %s", flight.flight_number, result.error)
+    if result.push_error:
+        log.warning("Phone push for %s failed: %s", flight.flight_number, result.push_error)
     if result.extra_failed:
         log.warning(
             "Alert for %s could not reach: %s",
@@ -204,6 +220,10 @@ def _delivery_note(result: NotifyResult) -> str:
         parts.append("Failed: " + ", ".join(result.extra_failed))
     if result.error and not reached:
         parts.append(f"Not sent: {result.error}")
+    if result.ifttt_sent:
+        parts.append("Phone push: sent")
+    elif result.push_error:
+        parts.append(f"Phone push failed: {result.push_error}")
     return "\n".join(parts)
 
 
@@ -625,7 +645,7 @@ def send_tracking_confirmation(
             body=body,
             extra_recipients=new_recipients if welcome else extra_recipients(flight.notify_emails),
             include_default=not welcome,
-            include_ifttt=False,  # phone pushes are for real changes only
+            # no push: phone pushes are for real changes only
         )
 
         note = _delivery_note(result) or "Not sent: nothing to send"

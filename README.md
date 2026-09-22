@@ -5,8 +5,8 @@ A personal flight tracker that you can run for free on your LAN.
 Register a flight number + date in a web page on your home network. The app
 polls flight status on an adaptive schedule, diffs every response against what
 it already knew, and emails you the moment something changes — a delay, a gate
-change, a cancellation, wheels-up, wheels-down. A second copy of each alert goes
-to IFTTT's Email trigger, which turns it into a push notification on your phone.
+change, a cancellation, wheels-up, wheels-down. Each alert also fires an IFTTT
+webhook, which turns it into a push notification on your phone.
 
 Runs as a single container. €0/month at personal volume.
 
@@ -46,23 +46,35 @@ Gmail will not accept your normal password over SMTP.
 By default alerts go to the same address that sends them. Set `MAIL_TO` to send
 them somewhere else.
 
-### 3. IFTTT applet (optional — this is the phone notification)
+### 3. IFTTT webhook (optional — this is the phone notification)
 
 Without this you still get emails; you just don't get a push notification.
+The Webhooks service needs **IFTTT Pro**.
 
-1. Install the IFTTT app and sign in — **with the same Gmail address** you put in
-   `SMTP_USER`. IFTTT's Email trigger only fires on mail sent *from* the address
-   registered to your IFTTT account. This is the step people get wrong.
-2. Create an applet: **[Email → Send a notification from the IFTTT app](https://ifttt.com/connect/email/if_notifications)**.
-3. Choose the trigger **"Send IFTTT an email tagged"** and set the tag to
-   `flight` (no `#`). The app puts `#flight` in the subject of the trigger copy;
-   change `IFTTT_HASHTAG` in `.env` if you pick a different tag.
-4. Leave `IFTTT_ENABLED=true`.
+1. Install the IFTTT app on your phone and sign in.
+2. Open [ifttt.com/maker_webhooks](https://ifttt.com/maker_webhooks), click
+   **Documentation**, and copy your key into `IFTTT_WEBHOOK_KEY` in `.env`.
+   Treat it like a password: anyone with it can fire your applets.
+3. Create an applet:
+   - **If:** Webhooks → *Receive a web request*, event name `flight_notification`
+     (or whatever you set in `IFTTT_EVENT`).
+   - **Then:** Notifications → *Send a rich notification from the IFTTT app*,
+     with Title `{{Value1}}`, Message `{{Value2}}`, Link URL `{{Value3}}`.
+4. Set `PUBLIC_BASE_URL` to the address your phone uses for this app (e.g.
+   `http://192.168.68.78:8080`) so tapping the notification opens the flight.
+   The link only works while your phone is on the home network.
 
-The free IFTTT plan allows 2 applets; you need one.
+What each push carries:
 
-> Each alert sends **two** emails: a readable one to your inbox, and a
-> hashtagged one to `trigger@applet.ifttt.com` that fires the applet.
+| Ingredient | Content | Example |
+|---|---|---|
+| `Value1` | Alert title | `KL1705 AMS→LIS DELAYED +45min` |
+| `Value2` | What changed, one per line | `Departure: 09:15 → 10:00` |
+| `Value3` | Link to the flight page | `http://192.168.68.78:8080/flights/3` |
+
+The push is sent directly over HTTPS, independent of Gmail: a Gmail failure
+doesn't block it, and a push failure doesn't block the email. Each outcome is
+noted in the flight's change history.
 
 ---
 
@@ -98,8 +110,8 @@ curl -s http://localhost:8080/healthz
 ```
 
 Once it's running, hit **"send test alert"** in the page footer. That verifies
-Gmail and IFTTT in one shot: your inbox should get a mail, and your phone
-should buzz.
+Gmail and the IFTTT webhook in one shot: your inbox should get a mail, and your
+phone should buzz. The confirmation banner reports each channel separately.
 
 ### Keep the laptop awake
 
@@ -181,7 +193,7 @@ add to a flight later gets a *you've been added* email; people already on the
 list don't hear about it again. Removing someone sends nothing.
 
 Confirmations reuse the poll that registration already makes, so they cost no
-API quota, and they never go to IFTTT, which stays reserved for real changes.
+API quota, and they never go to your phone, which stays reserved for real changes.
 Turn them off with `SEND_TRACKING_CONFIRMATIONS=false`.
 
 Every alert subject is prefixed with `PFT`, so they are easy to spot and to
@@ -240,8 +252,10 @@ The ones worth knowing:
 | `AERODATABOX_QUOTA_RESET_DAY` | `1` | Day of month your RapidAPI quota resets — see below. |
 | `SMTP_USER` / `SMTP_PASSWORD` | — | Gmail address + **app password**. |
 | `MAIL_TO` | = `SMTP_USER` | Where readable alerts land. |
-| `IFTTT_ENABLED` | `true` | Set `false` to skip the phone-notification copy. |
-| `IFTTT_HASHTAG` | `#flight` | Must match your applet's tag. |
+| `IFTTT_WEBHOOK_KEY` | — | Webhooks key (IFTTT Pro). Empty = no phone push. |
+| `IFTTT_EVENT` | `flight_notification` | Must match the applet's event name. |
+| `IFTTT_ENABLED` | `true` | Set `false` to pause phone pushes and keep the key. |
+| `PUBLIC_BASE_URL` | — | This app's LAN address, for tap-to-open links in pushes. |
 | `NOTIFICATIONS_ENABLED` | `true` | `false` records changes silently — handy for testing. |
 | `EMAIL_SUBJECT_PREFIX` | `PFT` | Prepended to every email subject. Empty for none. |
 | `SEND_TRACKING_CONFIRMATIONS` | `true` | "Tracking started" / "you've been added" emails. |
@@ -296,7 +310,8 @@ app/
   main.py         FastAPI routes, APScheduler wiring
   tracker.py      Adaptive poll cadence, quota guard, alert dispatch
   diffing.py      Snapshot → list of human-readable changes
-  notify.py       Gmail SMTP + IFTTT dual send
+  notify.py       Gmail SMTP alerts; hands the phone copy to push.py
+  push.py         IFTTT webhook (phone push)
   db.py           SQLite models (flights, events, api_calls)
   config.py       .env-backed settings
   callsign.py     Callsign resolution, with ICAO-derivation fallback
@@ -317,7 +332,7 @@ returns a `FlightSnapshot` — nothing else changes.
 |---|---|
 | `AeroDataBox rejected the API key (HTTP 401/403)` | Key wrong, or you haven't subscribed to the Basic plan on RapidAPI. |
 | `Gmail rejected the login` | Using your account password. It must be a 16-character app password, with 2FA enabled. |
-| Emails arrive, phone stays silent | IFTTT applet tag doesn't match `IFTTT_HASHTAG`, or your IFTTT account uses a different email than `SMTP_USER`. |
+| Emails arrive, phone stays silent | Check the change history for a `Phone push failed:` line. `HTTP 401` means a wrong `IFTTT_WEBHOOK_KEY`. If the push says sent, the applet's event name doesn't match `IFTTT_EVENT`, or notifications for the IFTTT app are off on your phone. |
 | `has no record of ... yet` | Normal far in advance. The app retries and gives up ~12h after the scheduled arrival. |
 | Header shows quota exhausted | Free tier spent for this billing period. The header shows the reset date; `Refresh now` still works for one-off checks. |
 | Permission errors on `./data` | Container runs as uid 1000. `sudo chown -R 1000:1000 data`. |

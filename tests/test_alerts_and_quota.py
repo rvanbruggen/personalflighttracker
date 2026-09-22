@@ -1,4 +1,4 @@
-"""Quota guard, abandonment, error backoff, and the Gmail+IFTTT dual send."""
+"""Quota guard, abandonment, error backoff, Gmail alerts and the IFTTT webhook push."""
 
 import asyncio
 import os
@@ -13,7 +13,9 @@ DB = "./data/test2.db"
 if os.path.exists(DB):
     os.remove(DB)
 
-from app import notify, tracker  # noqa: E402
+import httpx  # noqa: E402
+
+from app import notify, push, tracker  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.db import ApiCall, Flight, SessionLocal, init_db  # noqa: E402
 from app.providers.base import FlightNotFound, FlightSnapshot, ProviderError  # noqa: E402
@@ -134,8 +136,22 @@ with SessionLocal() as s:
           f.tracking_state == "active" and f.next_poll_at is not None, f.tracking_state)
 
 # ------------------------------------------------------------ Gmail + IFTTT
-print("\n4. Alert goes to both the inbox and the IFTTT trigger address")
+print("\n4. Alert goes to the inbox by email and to the phone by webhook")
 sent = []
+posts = []
+
+
+class FakeResponse:
+    def __init__(self, status_code=200, text="Congratulations! You've fired the flight_alert event"):
+        self.status_code, self.text = status_code, text
+
+
+def fake_post(url, payload):
+    posts.append((url, payload))
+    return FakeResponse()
+
+
+push._post = fake_post
 
 
 class FakeSMTP:
@@ -158,7 +174,7 @@ class FakeSMTP:
         sent.append(("login", user))
 
     def send_message(self, message):
-        sent.append(("send", message["To"], message["Subject"], message.get_content()))
+        sent.append(("send", message["To"], message["Subject"], message.get_body(preferencelist=("plain",)).get_content()))
 
 
 settings.smtp_user = "rik@example.com"
@@ -166,23 +182,33 @@ settings.smtp_password = "app-password"
 settings.mail_to = ""
 settings.notifications_enabled = True
 settings.ifttt_enabled = True
+settings.ifttt_webhook_key = "sekr3t-key"
+settings.ifttt_event = "flight_alert"
 original_smtp = smtplib.SMTP
 smtplib.SMTP = FakeSMTP
 try:
-    result = notify.send_alert("KL1705 AMS→LIS DELAYED +45min", "body text")
+    result = notify.send_alert(
+        "KL1705 AMS→LIS DELAYED +45min", "body text",
+        push=push.PushMessage("KL1705 AMS→LIS DELAYED +45min", "Delay: 0 → 45 min",
+                              "http://tracker.local/flights/1"),
+    )
 finally:
     smtplib.SMTP = original_smtp
 
 sends = [entry for entry in sent if entry[0] == "send"]
-check("exactly two copies sent", len(sends) == 2, f"{len(sends)}")
+check("exactly one email sent (no IFTTT trigger copy)", len(sends) == 1, f"{len(sends)}")
 check("STARTTLS used before login",
       [e[0] for e in sent].index("starttls") < [e[0] for e in sent].index("login"))
 check("inbox copy addressed to the user", sends[0][1] == "rik@example.com", sends[0][1])
-check("IFTTT copy addressed to the trigger", sends[1][1] == "trigger@applet.ifttt.com", sends[1][1])
-check("IFTTT subject carries the hashtag", sends[1][2].endswith("#flight"), sends[1][2])
-check("inbox subject has no hashtag noise", "#flight" not in sends[0][2], sends[0][2])
 check("inbox subject starts with PFT", sends[0][2].startswith("PFT "), sends[0][2])
-check("IFTTT subject starts with PFT", sends[1][2].startswith("PFT "), sends[1][2])
+check("exactly one webhook call", len(posts) == 1, str(len(posts)))
+check("webhook URL carries event and key",
+      posts[0][0] == "https://maker.ifttt.com/trigger/flight_alert/with/key/sekr3t-key", posts[0][0])
+check("payload maps title/message/link to value1/2/3",
+      posts[0][1] == {"value1": "KL1705 AMS→LIS DELAYED +45min", "value2": "Delay: 0 → 45 min",
+                      "value3": "http://tracker.local/flights/1"}, str(posts[0][1]))
+check("result reports both channels", result.inbox_sent and result.ifttt_sent and result.ok
+      and not result.push_error)
 check("prefix precedes the flight number",
       sends[0][2].startswith("PFT KL1705"), sends[0][2])
 
@@ -218,17 +244,49 @@ finally:
 check("test alert is prefixed too",
       [e for e in sent if e[0] == "send"][0][2].startswith("PFT "),
       [e for e in sent if e[0] == "send"][0][2])
-check("both report success", result.inbox_sent and result.ifttt_sent and result.ok)
+check("test alert pushes too", posts[-1][1]["value1"] == "Test alert from flight tracker", str(posts[-1]))
 
-print("\n5. Hashtag is not duplicated if already present")
-sent.clear()
+print("\n5. Webhook failures, retries and switches")
+posts.clear()
 smtplib.SMTP = FakeSMTP
 try:
-    notify.send_alert("KL1705 #flight", "body")
+    notify.send_alert("no push wanted", "body")
 finally:
     smtplib.SMTP = original_smtp
-ifttt_subject = [e for e in sent if e[0] == "send"][1][2]
-check("hashtag appears once", ifttt_subject.count("#flight") == 1, ifttt_subject)
+check("no push argument, no webhook call", posts == [])
+
+settings.ifttt_webhook_key = ""
+r = push.send_push(push.PushMessage("t", "m"))
+check("no key: skipped silently", not r.sent and not r.error and posts == [], str(r))
+settings.ifttt_webhook_key = "sekr3t-key"
+
+settings.ifttt_enabled = False
+r = push.send_push(push.PushMessage("t", "m"))
+check("IFTTT_ENABLED=false: skipped", not r.sent and posts == [])
+settings.ifttt_enabled = True
+
+push._post = lambda url, payload: (posts.append(url), FakeResponse(401, '{"errors":[{"message":"You sent an invalid key."}]}'))[1]
+r = push.send_push(push.PushMessage("t", "m"))
+check("401: clear error pointing at the key", not r.sent and "IFTTT_WEBHOOK_KEY" in r.error, r.error)
+check("401: not retried", len(posts) == 1, str(len(posts)))
+
+posts.clear()
+responses = [FakeResponse(503, "busy"), FakeResponse(200)]
+push._post = lambda url, payload: (posts.append(url), responses.pop(0))[1]
+r = push.send_push(push.PushMessage("t", "m"))
+check("5xx then 200: retried once and sent", r.sent and not r.error and len(posts) == 2, str(r))
+
+def boom(url, payload):
+    raise httpx.ConnectError(f"cannot reach {url}")
+
+push._post = boom
+r = push.send_push(push.PushMessage("t", "m"))
+check("network error: reported, not raised", not r.sent and "unreachable" in r.error, r.error)
+check("key never appears in the error", "sekr3t-key" not in r.error, r.error)
+
+print("\n5b. Push still goes out when Gmail fails, and vice versa")
+posts.clear()
+push._post = fake_post
 
 print("\n6. Auth failure gives an actionable message")
 class AuthFailSMTP(FakeSMTP):
@@ -237,16 +295,20 @@ class AuthFailSMTP(FakeSMTP):
 
 smtplib.SMTP = AuthFailSMTP
 try:
-    result = notify.send_alert("subject", "body")
+    result = notify.send_alert("subject", "body", push=push.PushMessage("subject", "m"))
 finally:
     smtplib.SMTP = original_smtp
+check("push sent despite the Gmail failure", result.ifttt_sent and len(posts) == 1)
 check("mentions app password", "app password" in result.error.lower(), result.error)
 check("marked as failed", not result.ok)
 
 print("\n7. Unconfigured SMTP degrades gracefully")
 settings.smtp_user = ""
 settings.smtp_password = ""
-result = notify.send_alert("subject", "body")
+push._post = lambda url, payload: FakeResponse(500, "down")
+result = notify.send_alert("subject", "body", push=push.PushMessage("subject", "m"))
+check("push failure kept apart from the email error",
+      "HTTP 500" in result.push_error and "HTTP" not in result.error, result.push_error)
 check("no crash, clear error", not result.ok and "SMTP_USER" in result.error, result.error)
 
 print("\n8. Quota window follows the RapidAPI billing anniversary")

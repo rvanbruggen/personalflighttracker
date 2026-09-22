@@ -12,6 +12,7 @@ os.environ["SMTP_USER"] = "rik@example.com"
 os.environ["SMTP_PASSWORD"] = "app-password"
 os.environ["NOTIFICATIONS_ENABLED"] = "true"
 os.environ["IFTTT_ENABLED"] = "true"  # on, to prove confirmations stay off the phone
+os.environ["IFTTT_WEBHOOK_KEY"] = "test-key"
 
 DB = "./data/test5.db"
 if os.path.exists(DB):
@@ -19,7 +20,7 @@ if os.path.exists(DB):
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from app import tracker  # noqa: E402
+from app import push, tracker  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.db import ApiCall, Flight, FlightEvent, SessionLocal, init_db  # noqa: E402
 from app.main import app  # noqa: E402
@@ -46,10 +47,18 @@ class FakeSMTP:
     def starttls(self, context=None): pass
     def login(self, u, p): pass
     def send_message(self, m):
-        SENT.append({"to": m["To"], "subject": m["Subject"], "body": m.get_content()})
+        SENT.append({"to": m["To"], "subject": m["Subject"], "body": m.get_body(preferencelist=("plain",)).get_content()})
 
 
 smtplib.SMTP = FakeSMTP
+PUSHES = []
+
+
+class _Ok:
+    status_code, text = 200, "ok"
+
+
+push._post = lambda url, payload: (PUSHES.append(payload), _Ok())[1]
 dep = datetime.now(timezone.utc) + timedelta(hours=30)
 
 
@@ -91,7 +100,7 @@ with SessionLocal() as s:
 to = sorted(m["to"] for m in SENT)
 check("default + both extras receive it",
       to == ["anna@example.com", "bob@example.org", "rik@example.com"], str(to))
-check("nothing sent to the IFTTT trigger", "trigger@applet.ifttt.com" not in to)
+check("no phone push for a confirmation", PUSHES == [], str(PUSHES))
 check("subject says tracking started, with PFT prefix and route",
       all(m["subject"] == "PFT SN2103 BRU→LIS tracking started" for m in SENT), SENT[0]["subject"])
 body = SENT[0]["body"]
@@ -169,13 +178,24 @@ check("history explains why", ev and "disabled" in ev[0].detail, ev[0].detail if
 
 print("\n8. Change alerts are unaffected")
 SENT.clear()
+PUSHES.clear()
 Stub.result = FlightSnapshot(status="Delayed", dep_iata="BRU", arr_iata="LIS",
                              dep_gate="B7", dep_scheduled_utc=dep)
 import asyncio  # noqa: E402
 asyncio.run(tracker.poll_flight(fid, force=True))
 to = sorted(m["to"] for m in SENT)
-check("change alert reaches default + current extras, and IFTTT",
-      to == ["carol@example.net", "rik@example.com", "trigger@applet.ifttt.com"], str(to))
+check("change alert reaches default + current extras by email",
+      to == ["carol@example.net", "rik@example.com"], str(to))
+check("and exactly one phone push", len(PUSHES) == 1, str(PUSHES))
+check("push title is the alert subject, without the email prefix",
+      PUSHES and PUSHES[0]["value1"] == "SN2103 BRU→LIS DELAYED",
+      PUSHES[0]["value1"] if PUSHES else "")
+check("push message lists what changed", PUSHES and "Expected → Delayed" in PUSHES[0]["value2"],
+      PUSHES[0]["value2"] if PUSHES else "")
+with SessionLocal() as s:
+    latest = s.query(FlightEvent).filter_by(flight_id=fid, kind="change").order_by(FlightEvent.id.desc()).first()
+check("change history records the push", latest and "Phone push: sent" in latest.detail,
+      latest.detail if latest else "")
 
 print()
 if failures:

@@ -367,13 +367,19 @@ async def resume_flight(request: Request, flight_id: int):
 @app.post("/test-alert")
 async def test_alert(request: Request):
     result = await asyncio.to_thread(send_test_alert)
+    if settings.ifttt_configured:
+        phone = "sent" if result.ifttt_sent else f"failed: {result.push_error}"
+    else:
+        phone = "off (no IFTTT_WEBHOOK_KEY)"
     if result.error:
-        return _flash(request, "/", f"Test alert failed: {result.error}", "error")
+        return _flash(
+            request, "/", f"Test alert failed: {result.error} · Phone push {phone}", "error"
+        )
     return _flash(
         request,
         "/",
-        f"Test alert sent (inbox={result.inbox_sent}, IFTTT={result.ifttt_sent}).",
-        "ok",
+        f"Test alert sent (inbox={result.inbox_sent}) · Phone push {phone}.",
+        "ok" if result.ifttt_sent or not settings.ifttt_configured else "error",
     )
 
 
@@ -386,7 +392,7 @@ async def healthz():
         "status": "ok",
         "aerodatabox_configured": settings.aerodatabox_configured,
         "smtp_configured": settings.smtp_configured,
-        "ifttt_enabled": settings.ifttt_enabled,
+        "ifttt_configured": settings.ifttt_configured,
         "scheduler_running": scheduler.running,
         "positions_enabled": settings.positions_enabled,
         "position_source": "adsb.lol",

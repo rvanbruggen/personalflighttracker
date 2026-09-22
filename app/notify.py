@@ -1,8 +1,8 @@
-"""Alerting: a readable email to your inbox, plus a hashtagged copy to the IFTTT
-Email trigger address which fires the phone notification applet.
+"""Alerting: a readable email to your inbox (and any extra recipients) over
+Gmail SMTP, plus a phone push through an IFTTT webhook (see push.py).
 
-IFTTT's Email service only fires for mail sent *from* the address registered
-with IFTTT — so both copies go out over the same Gmail SMTP session.
+The two channels are independent: the push goes out even when SMTP is not
+configured or Gmail rejects the login.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ from email.message import EmailMessage
 from typing import Optional, Sequence
 
 from .config import settings
+from .push import PushMessage, send_push
 
 log = logging.getLogger(__name__)
 
@@ -25,7 +26,8 @@ class NotifyResult:
     ifttt_sent: bool = False
     extra_sent: list[str] = field(default_factory=list)
     extra_failed: list[str] = field(default_factory=list)
-    error: str = ""
+    error: str = ""  # email delivery
+    push_error: str = ""  # phone push; reported separately so email stays authoritative
 
     @property
     def ok(self) -> bool:
@@ -60,28 +62,32 @@ EXTRA_RECIPIENT_FOOTER = (
 def send_alert(
     subject: str,
     body: str,
-    ifttt_subject: Optional[str] = None,
     extra_recipients: Sequence[str] = (),
     *,
+    push: Optional[PushMessage] = None,
     include_default: bool = True,
-    include_ifttt: bool = True,
 ) -> NotifyResult:
     """Blocking — call from a worker thread, not the event loop.
 
-    `subject` goes to your inbox; `ifttt_subject` (hashtag appended) goes to
-    IFTTT. IFTTT matches on the hashtag, so keep it in the subject line.
+    `subject` and `body` go to your inbox. `push`, when given, also goes to
+    your phone via the IFTTT webhook — leave it out to keep a message off the
+    phone.
 
     Each of `extra_recipients` gets an individual copy, so nobody sees anyone
     else's address and one bad address cannot block the others.
 
     `include_default=False` sends only to the extras (e.g. welcoming someone
-    added later); `include_ifttt=False` keeps a message off the phone.
+    added later).
     """
     result = NotifyResult()
 
     if not settings.notifications_enabled:
         result.error = "notifications disabled (NOTIFICATIONS_ENABLED=false)"
         return result
+
+    if push is not None:
+        pushed = send_push(push)
+        result.ifttt_sent, result.push_error = pushed.sent, pushed.error
 
     if not settings.smtp_configured:
         result.error = (
@@ -94,21 +100,16 @@ def send_alert(
     subject = with_prefix(subject)
     messages: list[tuple[str, EmailMessage]] = []
     if include_default:
-        messages.append(("inbox", _build(settings.effective_mail_to, subject, body)))
+        messages.append(
+            ("inbox", _build(settings.effective_mail_to, subject, body))
+        )
     default = settings.effective_mail_to.strip().lower()
     extra_body = body + EXTRA_RECIPIENT_FOOTER.format(app=settings.app_name)
     for address in dict.fromkeys(a.strip().lower() for a in extra_recipients):
         if address and address != default:
-            messages.append((f"extra:{address}", _build(address, subject, extra_body)))
-
-    if include_ifttt and settings.ifttt_enabled and settings.ifttt_trigger_email:
-        tag = settings.ifttt_hashtag.strip()
-        trigger_subject = with_prefix(ifttt_subject) if ifttt_subject else subject
-        if tag and tag.lower() not in trigger_subject.lower():
-            trigger_subject = f"{trigger_subject} {tag}"
-        messages.append(
-            ("ifttt", _build(settings.ifttt_trigger_email, trigger_subject, body))
-        )
+            messages.append(
+                (f"extra:{address}", _build(address, subject, extra_body))
+            )
 
     if not messages:
         return result  # nothing to send is not an error
@@ -125,8 +126,6 @@ def send_alert(
                     server.send_message(message)
                     if kind == "inbox":
                         result.inbox_sent = True
-                    elif kind == "ifttt":
-                        result.ifttt_sent = True
                     else:
                         result.extra_sent.append(kind.split(":", 1)[1])
                 except smtplib.SMTPException as exc:
@@ -165,7 +164,11 @@ def send_test_alert() -> NotifyResult:
         body=(
             "This is a test alert from your Personal Flight Tracker.\n\n"
             "If this landed in your inbox, Gmail SMTP works.\n"
-            "If your phone buzzed too, the IFTTT applet works.\n"
+            "If your phone buzzed too, the IFTTT webhook works.\n"
         ),
-        ifttt_subject="TEST alert from flight tracker",
+        push=PushMessage(
+            title="Test alert from flight tracker",
+            message="If you can read this, the IFTTT webhook works.",
+            link=settings.app_link("/"),
+        ),
     )
