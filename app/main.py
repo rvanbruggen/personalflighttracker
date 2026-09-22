@@ -14,6 +14,7 @@ from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from markupsafe import Markup, escape
 
 from .config import settings
 from .callsign import resolve_callsign
@@ -125,6 +126,59 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
 
 
+def _localtime(value: Optional[datetime]) -> Markup:
+    """Render a stored (naive UTC) moment as <time>; static/localtime.js turns
+    it into the browser's own time zone. Without JS it reads e.g. '13:49 UTC'."""
+    if value is None:
+        return Markup("—")
+    utc = value if value.tzinfo is None else value.astimezone(timezone.utc).replace(tzinfo=None)
+    iso = utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+    fallback = f"{utc.day} {utc.strftime('%b %H:%M')} UTC"
+    return Markup(f'<time class="local-time" datetime="{iso}">{escape(fallback)}</time>')
+
+
+templates.env.filters["localtime"] = _localtime
+
+
+def page_fingerprint(session, flight_id: Optional[int] = None) -> str:
+    """A short hash of everything a page shows, so an open page can ask
+    'has anything changed?' cheaply and reload only when it has.
+
+    Live position fixes are deliberately left out: the map refreshes those
+    itself, and reloading the page for each fix would reset the map.
+    """
+    import hashlib
+
+    flights = session.query(Flight)
+    events = session.query(FlightEvent)
+    if flight_id is not None:
+        flights = flights.filter(Flight.id == flight_id)
+        events = events.filter(FlightEvent.flight_id == flight_id)
+
+    parts: list[str] = []
+    for f in flights.order_by(Flight.id).all():
+        parts.append("|".join(str(v) for v in (
+            f.id, f.status, f.tracking_state, f.last_polled_at, f.next_poll_at,
+            f.last_error, f.dep_gate, f.dep_terminal, f.dep_actual_local,
+            f.arr_actual_local, f.arr_baggage_belt, f.label, f.notify_emails,
+        )))
+    latest_event = events.order_by(FlightEvent.id.desc()).first()
+    parts.append(f"events:{events.count()}:{latest_event.id if latest_event else 0}")
+    parts.append(f"quota:{quota_status()['used']}")
+    return hashlib.sha1("\n".join(parts).encode()).hexdigest()[:16]
+
+
+def _refresh_context(session, flight_id: Optional[int] = None) -> dict:
+    if settings.auto_refresh_seconds <= 0:
+        return {"fingerprint": "", "fingerprint_url": "", "refresh_seconds": 0}
+    query = f"?flight_id={flight_id}" if flight_id is not None else ""
+    return {
+        "fingerprint": page_fingerprint(session, flight_id),
+        "fingerprint_url": f"/api/fingerprint{query}",
+        "refresh_seconds": settings.auto_refresh_seconds,
+    }
+
+
 def _flash(request: Request, url: str, message: str, level: str = "ok") -> RedirectResponse:
     separator = "&" if "?" in url else "?"
     return RedirectResponse(
@@ -152,6 +206,7 @@ async def index(request: Request, msg: str = "", level: str = "ok"):
         events_by_flight = {
             flight.id: flight for flight in flights
         }
+        refresh = _refresh_context(session)
 
     return templates.TemplateResponse(
         request,
@@ -170,6 +225,7 @@ async def index(request: Request, msg: str = "", level: str = "ok"):
             "message": msg,
             "level": level,
             "now": utcnow(),
+            **refresh,
         },
     )
 
@@ -253,6 +309,7 @@ async def flight_detail(request: Request, flight_id: int, msg: str = "", level: 
             raise HTTPException(status_code=404, detail="Flight not tracked")
         events = list(flight.events)
         resolved = flight_callsign(flight)
+        refresh = _refresh_context(session, flight_id)
 
     return templates.TemplateResponse(
         request,
@@ -270,6 +327,7 @@ async def flight_detail(request: Request, flight_id: int, msg: str = "", level: 
             "message": msg,
             "level": level,
             "now": utcnow(),
+            **refresh,
         },
     )
 
@@ -427,6 +485,16 @@ async def test_alert(request: Request):
 
 
 # ------------------------------------------------------------------------- API
+
+
+@app.get("/api/fingerprint")
+async def api_fingerprint(flight_id: Optional[int] = None):
+    """Polled by open pages; they reload only when this value changes."""
+    with SessionLocal() as session:
+        if flight_id is not None and session.get(Flight, flight_id) is None:
+            return JSONResponse({"fingerprint": "gone"}, headers={"Cache-Control": "no-store"})
+        value = page_fingerprint(session, flight_id)
+    return JSONResponse({"fingerprint": value}, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/healthz")

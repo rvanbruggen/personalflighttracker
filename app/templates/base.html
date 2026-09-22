@@ -8,7 +8,7 @@
   {% block head %}{% endblock %}
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✈️</text></svg>">
 </head>
-<body>
+<body{% if fingerprint %} data-fingerprint="{{ fingerprint }}" data-fingerprint-url="{{ fingerprint_url }}" data-refresh-seconds="{{ refresh_seconds }}"{% endif %}>
   <header class="topbar">
     <a class="brand" href="/">✈︎ {{ settings.app_name }}</a>
     <div class="quota"
@@ -33,10 +33,14 @@
       · Gmail {{ "✓" if settings.smtp_configured else "✗ not configured" }}
       · IFTTT push {{ "✓" if settings.ifttt_configured else "off" }}
     </span>
+    <span id="refresh-note" class="refresh-note" aria-live="polite"></span>
+    <span id="tz-note" class="refresh-note"></span>
     <form method="post" action="/test-alert" class="inline">
       <button class="link" type="submit">send test alert</button>
     </form>
   </footer>
+  <script src="/static/localtime.js"></script>
+  <script src="/static/autorefresh.js"></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

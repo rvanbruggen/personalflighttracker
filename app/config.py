@@ -13,7 +13,7 @@ class Settings(BaseSettings):
 
     # --- App ---
     app_name: str = "Personal Flight Tracker"
-    app_version: str = "0.6.0"
+    app_version: str = "0.7.0"
     timezone: str = "Europe/Brussels"  # used for rendering local times in the UI
     database_url: str = "sqlite:///./data/flights.db"
     log_level: str = "INFO"
@@ -81,6 +81,11 @@ class Settings(BaseSettings):
     # Email everyone on a flight when tracking starts, and anyone added to a
     # flight later, so the first message they see isn't a surprise delay alert.
     send_tracking_confirmations: bool = True
+
+    # --- Web UI ---
+    # How often open pages ask the server whether anything changed (seconds).
+    # They only reload when it has. 0 turns auto-refresh off.
+    auto_refresh_seconds: int = 30
 
     # --- Email design ---
     # Render a map image into each alert (OpenStreetMap tiles, cached on disk).

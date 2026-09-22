@@ -270,6 +270,20 @@ A derived callsign is **labelled as unconfirmed** in the UI and flagged as
 When neither route yields a callsign, the map says live position is unavailable
 rather than showing a possibly-wrong aircraft.
 
+## The web pages
+
+The flight list and each flight's page **keep themselves up to date**. Every
+30 seconds they ask the tracker whether anything they show has changed, and
+reload only if it has — so an unchanged page never flickers. Reloads wait
+while you're typing in a form (the footer says so), keep your scroll
+position, and don't bring back one-off messages. A tab in the background
+doesn't poll; it checks as soon as you return to it. The live map updates on
+its own and doesn't trigger page reloads.
+
+"Last checked" / "next check" and the history timestamps are shown in **your
+browser's time zone** (hover for the zone and the UTC time). Departure and
+arrival times stay in each airport's local time.
+
 ## Configuration
 
 Every setting lives in `.env`; see [.env.example](.env.example) for the annotated
@@ -292,6 +306,7 @@ The ones worth knowing:
 | `EMAIL_SUBJECT_PREFIX` | `PFT` | Prepended to every email subject. Empty for none. |
 | `SEND_TRACKING_CONFIRMATIONS` | `true` | "Tracking started" / "you've been added" emails. |
 | `EMAIL_MAP_ENABLED` | `true` | Include a route map image in emails. |
+| `AUTO_REFRESH_SECONDS` | `30` | How often open pages check for updates. `0` turns auto-refresh off. |
 | `MAP_TILE_URL` | OSM standard tiles | Tile source for the email map. |
 | `POLL_*` | see table above | Status cadence tuning. |
 | `POSITIONS_ENABLED` | `true` | `false` disables the map and position polling. |
@@ -306,6 +321,7 @@ The ones worth knowing:
 | `GET /` | Registration form + tracked flights |
 | `GET /flights/{id}` | One flight: current state, change history, raw provider JSON |
 | `GET /healthz` | Config + scheduler + quota status |
+| `GET /api/fingerprint[?flight_id=]` | Short hash of a page's content; open pages reload when it changes |
 | `GET /api/flights` | JSON list of tracked flights, including each one's recipients |
 | `GET /api/flights/{id}/track` | Trail, endpoints, and latest fix — what the map consumes |
 | `GET /flights/{id}/email-preview?kind=alert\|started\|welcome` | Show that flight's email in the browser; sends nothing |

@@ -71,7 +71,7 @@
         </td>
         <td>{{ flight.dep_gate or "—" }}</td>
         <td class="hint">
-          {% if flight.next_poll_at %}{{ flight.next_poll_at.strftime("%d %b %H:%M") }}Z
+          {% if flight.next_poll_at %}{{ flight.next_poll_at|localtime }}
           {% else %}—{% endif %}
         </td>
         <td class="actions">
@@ -96,7 +96,7 @@
   <ul class="events">
     {% for event in recent %}
     <li class="event event-{{ event.kind }}">
-      <span class="when">{{ event.created_at.strftime("%d %b %H:%M") }}Z</span>
+      <span class="when">{{ event.created_at|localtime }}</span>
       <span class="what">{{ event.summary }}</span>
       {% if event.notified %}<span class="sent" title="Alert sent">✉︎</span>{% endif %}
     </li>

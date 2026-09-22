@@ -74,9 +74,9 @@
   <p class="hint poll-line">
     Tracking: <strong>{{ flight.tracking_state }}</strong> ·
     last checked
-    {% if flight.last_polled_at %}{{ flight.last_polled_at.strftime("%d %b %H:%M") }}Z{% else %}never{% endif %}
+    {% if flight.last_polled_at %}{{ flight.last_polled_at|localtime }}{% else %}never{% endif %}
     · next check
-    {% if flight.next_poll_at %}{{ flight.next_poll_at.strftime("%d %b %H:%M") }}Z{% else %}—{% endif %}
+    {% if flight.next_poll_at %}{{ flight.next_poll_at|localtime }}{% else %}—{% endif %}
   </p>
   {% if flight.last_error %}
   <p class="flash flash-error">{{ flight.last_error }}</p>
@@ -154,7 +154,7 @@
   <ul class="events">
     {% for event in events %}
     <li class="event event-{{ event.kind }}">
-      <span class="when">{{ event.created_at.strftime("%d %b %H:%M") }}Z</span>
+      <span class="when">{{ event.created_at|localtime }}</span>
       <div class="what">
         <strong>{{ event.summary }}</strong>
         {% if event.detail %}<pre>{{ event.detail }}</pre>{% endif %}
