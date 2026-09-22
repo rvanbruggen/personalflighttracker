@@ -203,6 +203,38 @@ filter on in Gmail:
 PFT KL1705 AMS→LIS DELAYED +45min
 ```
 
+### What the emails look like
+
+Every email is designed HTML with a plain-text version alongside, so it still
+reads well in clients that block HTML:
+
+- **Header and banner** — the PFT logo, then a coloured banner for the kind of
+  event (red cancelled/diverted, amber delayed, blue departed, green landed,
+  purple gate change) and a plain-words headline such as
+  *"SN3811 has departed, 45 min late"*.
+- **What changed** — bullets with the old value struck through. Times are shown
+  in the airport's local time, like the rest of the email.
+- **Flight details** — status, departure and arrival (local), terminal and gate,
+  baggage belt, aircraft.
+- **Map** — a picture of the planned route (great circle), the path flown so
+  far, and the aircraft's last position, drawn from OpenStreetMap tiles.
+- **When you'll hear from us next** — the next check time and the current
+  checking rhythm, and a reminder that emails only come when something
+  changes. The last email for a flight says tracking has ended.
+- **Where this information comes from** — AeroDataBox for status (with when it
+  was last checked), adsb.lol for position, OpenStreetMap for the map.
+
+To see a flight's emails without sending anything, use the *Preview the email*
+links on its page.
+
+**About the map image.** Email clients can't run the interactive map, and
+OpenStreetMap has no official static-map service, so the app stitches a handful
+of standard OSM tiles together itself. In line with OSM's tile policy it sends
+an identifying User-Agent, caches tiles on disk (`data/tiles`, 14 days), and
+prints the OpenStreetMap credit on the image. Set `EMAIL_MAP_ENABLED=false` to
+leave maps out; if the tiles can't be fetched the email still goes out, with
+a plain background or without the map.
+
 ---
 
 ## The live map
@@ -259,6 +291,8 @@ The ones worth knowing:
 | `NOTIFICATIONS_ENABLED` | `true` | `false` records changes silently — handy for testing. |
 | `EMAIL_SUBJECT_PREFIX` | `PFT` | Prepended to every email subject. Empty for none. |
 | `SEND_TRACKING_CONFIRMATIONS` | `true` | "Tracking started" / "you've been added" emails. |
+| `EMAIL_MAP_ENABLED` | `true` | Include a route map image in emails. |
+| `MAP_TILE_URL` | OSM standard tiles | Tile source for the email map. |
 | `POLL_*` | see table above | Status cadence tuning. |
 | `POSITIONS_ENABLED` | `true` | `false` disables the map and position polling. |
 | `ADSBLOL_CONTACT` | project URL | Contact point adsb.lol requires; 403 without it. |
@@ -274,6 +308,7 @@ The ones worth knowing:
 | `GET /healthz` | Config + scheduler + quota status |
 | `GET /api/flights` | JSON list of tracked flights, including each one's recipients |
 | `GET /api/flights/{id}/track` | Trail, endpoints, and latest fix — what the map consumes |
+| `GET /flights/{id}/email-preview?kind=alert\|started\|welcome` | Show that flight's email in the browser; sends nothing |
 
 ## Development
 
@@ -316,6 +351,10 @@ app/
   config.py       .env-backed settings
   callsign.py     Callsign resolution, with ICAO-derivation fallback
   recipients.py   Per-flight extra recipients: parsing and validation
+  email_render.py HTML emails: headline, details, next update, sources
+  cadence.py      Polling phases, shared by the tracker and the emails
+  staticmap.py    Map image for emails, from cached OpenStreetMap tiles
+  graphics.py     Logo and plane shape (scripts/make_logo.py rebuilds the PNG)
   static/map.js   Leaflet map: trail, route, aircraft marker
   providers/
     base.py       FlightSnapshot / PositionFix + the provider interfaces

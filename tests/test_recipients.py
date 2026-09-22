@@ -54,7 +54,7 @@ class FakeSMTP:
     def send_message(self, m):
         if m["To"] in FakeSMTP.reject:
             raise smtplib.SMTPRecipientsRefused({m["To"]: (550, b"no such user")})
-        SENT.append({"to": m["To"], "subject": m["Subject"], "body": m.get_content()})
+        SENT.append({"to": m["To"], "subject": m["Subject"], "body": m.get_body(preferencelist=("plain",)).get_content()})
 
 
 smtplib.SMTP = FakeSMTP

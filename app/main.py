@@ -35,8 +35,10 @@ from .tracker import (
     position_tick,
     quota_status,
     send_tracking_confirmation,
+    step_from_flight,
     tick,
 )
+from .email_render import FlightView, build_email
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level, logging.INFO),
@@ -270,6 +272,47 @@ async def flight_detail(request: Request, flight_id: int, msg: str = "", level: 
             "now": utcnow(),
         },
     )
+
+
+@app.get("/flights/{flight_id}/email-preview", response_class=HTMLResponse)
+async def email_preview(flight_id: int, kind: str = "alert"):
+    """Show the email a flight would send, in the browser. Sends nothing.
+
+    kind=alert replays the most recent change (or shows a sample if there is
+    none); kind=started / welcome show the confirmation emails."""
+    import base64
+    import re as _re
+
+    if kind not in {"alert", "started", "welcome"}:
+        raise HTTPException(status_code=400, detail="kind must be alert, started or welcome")
+
+    with SessionLocal() as session:
+        flight = session.get(Flight, flight_id)
+        if flight is None:
+            raise HTTPException(status_code=404, detail="Flight not tracked")
+        view = FlightView.from_flight(flight, flight_callsign(flight))
+        step = step_from_flight(flight)
+        changes: list[tuple[str, str, str]] = []
+        if kind == "alert":
+            latest = (
+                session.query(FlightEvent)
+                .filter_by(flight_id=flight_id, kind="change")
+                .order_by(FlightEvent.created_at.desc())
+                .first()
+            )
+            for line in (latest.detail if latest else "").splitlines():
+                match = _re.match(r"^(.+?): (.*) → (.*)$", line)
+                if match:
+                    old, new = match.group(2), match.group(3)
+                    changes.append((match.group(1), "" if old == "—" else old, new))
+            if not changes and view.status:
+                changes = [("Status", "", view.status)]
+
+    rendered = await asyncio.to_thread(build_email, kind, view, changes, step)
+    html = rendered.html
+    for cid, data in rendered.images.items():
+        html = html.replace(f"cid:{cid}", "data:image/png;base64," + base64.b64encode(data).decode())
+    return HTMLResponse(html)
 
 
 @app.post("/flights/{flight_id}/refresh")

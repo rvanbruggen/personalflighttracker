@@ -26,7 +26,7 @@ init_db()
 SENT: list[tuple[str, str]] = []
 
 
-def fake_notify(flight, snapshot, changes, subject):
+def fake_notify(flight, snapshot, changes, subject, **kwargs):
     from app.notify import NotifyResult
 
     SENT.append((subject, "\n".join(c.as_line() for c in changes)))

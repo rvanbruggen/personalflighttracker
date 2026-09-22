@@ -110,7 +110,12 @@
     </label>
     <button type="submit">Save</button>
   </form>
-  <p class="hint">Each person gets their own copy, so nobody sees anyone else's address.</p>
+  <p class="hint">Each person gets their own copy, so nobody sees anyone else's address.
+    Preview the email:
+    <a href="/flights/{{ flight.id }}/email-preview?kind=alert" target="_blank">alert</a> ·
+    <a href="/flights/{{ flight.id }}/email-preview?kind=started" target="_blank">tracking started</a> ·
+    <a href="/flights/{{ flight.id }}/email-preview?kind=welcome" target="_blank">you've been added</a>
+  </p>
 </section>
 
 {% if positions_enabled %}

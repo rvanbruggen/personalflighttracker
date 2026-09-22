@@ -13,7 +13,7 @@ class Settings(BaseSettings):
 
     # --- App ---
     app_name: str = "Personal Flight Tracker"
-    app_version: str = "0.5.0"
+    app_version: str = "0.6.0"
     timezone: str = "Europe/Brussels"  # used for rendering local times in the UI
     database_url: str = "sqlite:///./data/flights.db"
     log_level: str = "INFO"
@@ -82,6 +82,15 @@ class Settings(BaseSettings):
     # flight later, so the first message they see isn't a surprise delay alert.
     send_tracking_confirmations: bool = True
 
+    # --- Email design ---
+    # Render a map image into each alert (OpenStreetMap tiles, cached on disk).
+    email_map_enabled: bool = True
+    # OSM's tile policy asks for an identifying User-Agent (see
+    # http_user_agent) and local caching; heavy use needs permission. A
+    # personal tracker fetches a handful of tiles per email.
+    map_tile_url: str = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+    map_tile_cache_dir: str = "./data/tiles"
+    map_tile_cache_days: int = 14
     # Prepended to every outgoing email subject, so alerts are easy to spot
     # and to filter on in Gmail. Set empty to disable.
     email_subject_prefix: str = "PFT"
@@ -97,6 +106,11 @@ class Settings(BaseSettings):
     @classmethod
     def _upper(cls, v: str) -> str:
         return v.upper()
+
+    @property
+    def http_user_agent(self) -> str:
+        """Identifying User-Agent for outbound requests (adsb.lol, OSM tiles)."""
+        return self.adsblol_user_agent
 
     @property
     def adsblol_user_agent(self) -> str:

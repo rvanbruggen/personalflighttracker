@@ -12,6 +12,7 @@ MODULES = [
     "test_positions.py",
     "test_recipients.py",
     "test_confirmations.py",
+    "test_email_design.py",
 ]
 
 failed = []

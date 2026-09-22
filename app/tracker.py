@@ -15,7 +15,9 @@ from typing import Optional
 
 from sqlalchemy import or_
 
+from .cadence import NextStep, phase_for
 from .callsign import resolve_callsign
+from .email_render import FlightView, build_email
 from .config import settings
 from .db import (
     ApiCall,
@@ -88,6 +90,34 @@ def next_poll_delay(flight: Flight, snapshot: Optional[FlightSnapshot]) -> timed
     return timedelta(minutes=settings.poll_within_2h_minutes)
 
 
+def plan_next_step(flight: Flight, snapshot: FlightSnapshot) -> NextStep:
+    """What happens after this poll: stop, or check again at a given time."""
+    if snapshot.is_terminal:
+        return NextStep("completed", None, "final", snapshot.status)
+    if _should_abandon(flight):
+        return NextStep("abandoned", None, "final")
+    now = utcnow()
+    status = snapshot.status or flight.status
+    return NextStep(
+        "scheduled",
+        _naive(now + next_poll_delay(flight, snapshot)),
+        phase_for(status, flight.dep_scheduled_utc, now),
+    )
+
+
+def step_from_flight(flight: Flight) -> NextStep:
+    """The plan as currently stored on a flight (for confirmation emails)."""
+    if flight.tracking_state == "completed":
+        return NextStep("completed", None, "final", flight.status)
+    if flight.tracking_state == "abandoned":
+        return NextStep("abandoned", None, "final")
+    return NextStep(
+        "scheduled",
+        flight.next_poll_at,
+        phase_for(flight.status, flight.dep_scheduled_utc, utcnow()),
+    )
+
+
 def _should_abandon(flight: Flight) -> bool:
     """Give up on a flight that never reported a terminal status."""
     reference = _aware(flight.arr_scheduled_utc) or _aware(flight.dep_scheduled_utc)
@@ -138,6 +168,9 @@ def _notify(
     snapshot: FlightSnapshot,
     changes: list,
     subject: str,
+    *,
+    view: Optional[FlightView] = None,
+    next_step: Optional[NextStep] = None,
 ) -> NotifyResult:
     """Compose and send the alert to the default address plus this flight's
     extra recipients."""
@@ -178,6 +211,14 @@ def _notify(
     if flight.label:
         lines += ["", f"Note: {flight.label}"]
 
+    html = images = None
+    if view is not None:
+        rendered = build_email(
+            "alert", view, [(c.label, c.old, c.new) for c in changes], next_step
+        )
+        lines.append(rendered.text_appendix)
+        html, images = rendered.html, rendered.images
+
     push_lines = [change.as_line() for change in changes]
     if delay is not None and abs(delay) >= 1:
         push_lines.append(f"Now {abs(delay)} min {'late' if delay > 0 else 'early'}")
@@ -193,6 +234,8 @@ def _notify(
             link=settings.app_link(f"/flights/{flight.id}"),
         ),
         extra_recipients=extra_recipients(flight.notify_emails),
+        html=html,
+        images=images,
     )
     if result.error:
         log.warning("Alert for %s not fully delivered: %s", flight.flight_number, result.error)
@@ -309,6 +352,10 @@ async def poll_flight(flight_id: int, *, force: bool = False) -> str:
         flight.last_error = ""
         flight.consecutive_errors = 0
 
+        # Decide what happens next *before* alerting, so the email can say so;
+        # the same plan is applied to the schedule below.
+        next_step = plan_next_step(flight, snapshot)
+
         outcome = "no change"
         if is_first_poll:
             session.add(
@@ -330,8 +377,10 @@ async def poll_flight(flight_id: int, *, force: bool = False) -> str:
             significant = any(change.significant for change in changes)
             notified = False
             if significant:
+                view = FlightView.from_flight(flight, flight_callsign(flight))
                 result = await asyncio.to_thread(
-                    _notify, flight, snapshot, changes, subject
+                    _notify, flight, snapshot, changes, subject,
+                    view=view, next_step=next_step,
                 )
                 notified = bool(
                     result.inbox_sent or result.ifttt_sent or result.extra_sent
@@ -350,16 +399,16 @@ async def poll_flight(flight_id: int, *, force: bool = False) -> str:
             )
             outcome = f"{len(changes)} change(s)"
 
-        if snapshot.is_terminal:
+        if next_step.kind == "completed":
             flight.tracking_state = "completed"
             flight.next_poll_at = None
             outcome += " — tracking complete"
-        elif _should_abandon(flight):
+        elif next_step.kind == "abandoned":
             flight.tracking_state = "abandoned"
             flight.next_poll_at = None
             outcome += " — abandoned (past arrival, no terminal status)"
         else:
-            flight.next_poll_at = _naive(utcnow() + next_poll_delay(flight, snapshot))
+            flight.next_poll_at = next_step.at
             # Airborne: start position polling right away rather than waiting.
             if snapshot.is_airborne and flight.next_position_poll_at is None:
                 flight.next_position_poll_at = _naive(utcnow())
@@ -640,9 +689,16 @@ def send_tracking_confirmation(
             return None
 
         subject, body = _confirmation_message(flight, welcome)
+        rendered = build_email(
+            "welcome" if welcome else "started",
+            FlightView.from_flight(flight, flight_callsign(flight)),
+            step=step_from_flight(flight),
+        )
         result = send_alert(
             subject=subject,
-            body=body,
+            body=body + "\n" + rendered.text_appendix,
+            html=rendered.html,
+            images=rendered.images,
             extra_recipients=new_recipients if welcome else extra_recipients(flight.notify_emails),
             include_default=not welcome,
             # no push: phone pushes are for real changes only

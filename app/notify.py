@@ -15,6 +15,7 @@ from email.message import EmailMessage
 from typing import Optional, Sequence
 
 from .config import settings
+from .email_render import EXTRA_FOOTER_HTML, EXTRA_FOOTER_MARKER, build_email
 from .push import PushMessage, send_push
 
 log = logging.getLogger(__name__)
@@ -44,12 +45,26 @@ def with_prefix(subject: str) -> str:
     return f"{prefix} {subject}"
 
 
-def _build(to_address: str, subject: str, body: str) -> EmailMessage:
+def _build(
+    to_address: str,
+    subject: str,
+    body: str,
+    html: Optional[str] = None,
+    images: Optional[dict[str, bytes]] = None,
+) -> EmailMessage:
+    """Plain text always; with `html`, a multipart/alternative whose HTML part
+    carries `images` inline (multipart/related, referenced as cid:<key>)."""
     message = EmailMessage()
     message["From"] = settings.effective_mail_from
     message["To"] = to_address
     message["Subject"] = subject
     message.set_content(body)
+    if html:
+        message.add_alternative(html, subtype="html")
+        if images:
+            html_part = message.get_payload()[1]
+            for cid, data in images.items():
+                html_part.add_related(data, maintype="image", subtype="png", cid=f"<{cid}>")
     return message
 
 
@@ -66,6 +81,8 @@ def send_alert(
     *,
     push: Optional[PushMessage] = None,
     include_default: bool = True,
+    html: Optional[str] = None,
+    images: Optional[dict[str, bytes]] = None,
 ) -> NotifyResult:
     """Blocking — call from a worker thread, not the event loop.
 
@@ -78,6 +95,8 @@ def send_alert(
 
     `include_default=False` sends only to the extras (e.g. welcoming someone
     added later).
+
+    `html` / `images` add a designed HTML version alongside the plain text.
     """
     result = NotifyResult()
 
@@ -101,14 +120,19 @@ def send_alert(
     messages: list[tuple[str, EmailMessage]] = []
     if include_default:
         messages.append(
-            ("inbox", _build(settings.effective_mail_to, subject, body))
+            ("inbox", _build(settings.effective_mail_to, subject, body, html, images))
         )
     default = settings.effective_mail_to.strip().lower()
     extra_body = body + EXTRA_RECIPIENT_FOOTER.format(app=settings.app_name)
+    extra_html = (
+        html.replace(EXTRA_FOOTER_MARKER, EXTRA_FOOTER_HTML.format(app=settings.app_name))
+        if html
+        else None
+    )
     for address in dict.fromkeys(a.strip().lower() for a in extra_recipients):
         if address and address != default:
             messages.append(
-                (f"extra:{address}", _build(address, subject, extra_body))
+                (f"extra:{address}", _build(address, subject, extra_body, extra_html, images))
             )
 
     if not messages:
@@ -159,6 +183,7 @@ def send_alert(
 
 
 def send_test_alert() -> NotifyResult:
+    rendered = build_email("test")
     return send_alert(
         subject="test alert",
         body=(
@@ -171,4 +196,6 @@ def send_test_alert() -> NotifyResult:
             message="If you can read this, the IFTTT webhook works.",
             link=settings.app_link("/"),
         ),
+        html=rendered.html,
+        images=rendered.images,
     )

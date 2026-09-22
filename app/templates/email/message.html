@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta name="supported-color-schemes" content="light">
+<title>{{ headline }}</title>
+</head>
+<body style="margin:0;padding:0;background:#EEF2F7;-webkit-text-size-adjust:100%;">
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:#EEF2F7;">{{ preheader }}</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#EEF2F7;">
+<tr><td align="center" style="padding:24px 12px;">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0"
+       style="width:100%;max-width:600px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1F2937;">
+
+  <!-- brand bar -->
+  <tr><td style="padding:0 4px 14px;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+      {% if has_logo %}
+      <td style="padding-right:10px;vertical-align:middle;">
+        <img src="cid:logo" width="40" height="40" alt="PFT" style="display:block;border:0;border-radius:9px;">
+      </td>
+      {% endif %}
+      <td style="vertical-align:middle;">
+        <div style="font-size:16px;line-height:20px;font-weight:700;color:#0F2747;">{{ app_name }}</div>
+        <div style="font-size:12px;line-height:16px;color:#6B7280;">Flight alerts</div>
+      </td>
+    </tr></table>
+  </td></tr>
+
+  <!-- card -->
+  <tr><td style="background:#FFFFFF;border-radius:14px;overflow:hidden;border:1px solid #E1E6EE;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+
+      <!-- coloured banner -->
+      <tr><td style="background:{{ accent }};padding:10px 24px;">
+        <span style="font-size:12px;letter-spacing:1.2px;font-weight:700;color:#FFFFFF;">{{ banner_label }}</span>
+      </td></tr>
+
+      <!-- headline -->
+      <tr><td style="padding:22px 24px 6px;">
+        <h1 style="margin:0;font-size:24px;line-height:30px;font-weight:700;color:#0F2747;">{{ headline }}</h1>
+        {% if route %}
+        <p style="margin:8px 0 0;font-size:15px;line-height:21px;color:#374151;">{{ route }}</p>
+        {% endif %}
+        {% if meta %}
+        <p style="margin:4px 0 0;font-size:13px;line-height:18px;color:#6B7280;">{{ meta }}</p>
+        {% endif %}
+      </td></tr>
+
+      {% if kind == "test" %}
+      <tr><td style="padding:14px 24px 22px;font-size:15px;line-height:23px;color:#374151;">
+        <p style="margin:0 0 10px;">This is a test message from your Personal Flight Tracker.</p>
+        <ul style="margin:0;padding-left:20px;">
+          <li style="margin:0 0 6px;">If you're reading this, <strong>Gmail delivery works</strong>.</li>
+          <li style="margin:0 0 6px;">Real alerts look like this, with the flight's details, a map of the route, and when you'll hear next.</li>
+          <li style="margin:0;">If IFTTT is enabled and your phone buzzed, that works too.</li>
+        </ul>
+      </td></tr>
+      {% endif %}
+
+      {% if changes %}
+      <!-- what changed -->
+      <tr><td style="padding:16px 24px 4px;">
+        <div style="font-size:12px;letter-spacing:1px;font-weight:700;color:#6B7280;margin:0 0 8px;">WHAT CHANGED</div>
+        <div style="background:{{ tint }};border-radius:10px;padding:12px 16px;">
+          <ul style="margin:0;padding-left:18px;font-size:15px;line-height:23px;color:#1F2937;">
+            {% for label, old, new in changes %}
+            <li style="margin:2px 0;">
+              {{ label }}:
+              {% if old %}<span style="text-decoration:line-through;color:#6B7280;">{{ old }}</span> &rarr;{% endif %}
+              <strong style="color:{{ accent }};">{{ new }}</strong>
+            </li>
+            {% endfor %}
+          </ul>
+        </div>
+      </td></tr>
+      {% endif %}
+
+      {% if rows %}
+      <!-- details -->
+      <tr><td style="padding:18px 24px 4px;">
+        <div style="font-size:12px;letter-spacing:1px;font-weight:700;color:#6B7280;margin:0 0 6px;">FLIGHT DETAILS</div>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:14px;line-height:20px;">
+          {% for label, value in rows %}
+          <tr>
+            <td style="padding:7px 12px 7px 0;color:#6B7280;width:130px;vertical-align:top;border-bottom:1px solid #EEF1F5;">{{ label }}</td>
+            <td style="padding:7px 0;color:#111827;vertical-align:top;border-bottom:1px solid #EEF1F5;">{{ value|safe }}</td>
+          </tr>
+          {% endfor %}
+        </table>
+      </td></tr>
+      {% endif %}
+
+      {% if has_map %}
+      <!-- map -->
+      <tr><td style="padding:18px 24px 4px;">
+        <img src="cid:map" width="552" alt="Map of the flight's route{% if route %}: {{ route }}{% endif %}"
+             style="display:block;width:100%;max-width:552px;height:auto;border:1px solid #E1E6EE;border-radius:10px;">
+        <p style="margin:8px 0 0;font-size:12px;line-height:18px;color:#6B7280;">{{ map_caption }}</p>
+      </td></tr>
+      {% endif %}
+
+      {% if next_title %}
+      <!-- next update -->
+      <tr><td style="padding:18px 24px 4px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr><td style="background:#F0F7F6;border-left:4px solid #0F766E;border-radius:8px;padding:14px 16px;">
+            <div style="font-size:14px;line-height:20px;font-weight:700;color:#0F766E;margin:0 0 6px;">&#9201; {{ next_title }}</div>
+            {% for p in next_paragraphs %}
+            <p style="margin:0 0 {{ '0' if loop.last else '8px' }};font-size:14px;line-height:21px;color:#1F2937;">{{ p|safe }}</p>
+            {% endfor %}
+          </td></tr>
+        </table>
+      </td></tr>
+      {% endif %}
+
+      {% if note %}
+      <tr><td style="padding:14px 24px 0;font-size:14px;line-height:20px;color:#374151;">
+        <strong>Note:</strong> {{ note }}
+      </td></tr>
+      {% endif %}
+
+      <tr><td style="padding:0 0 22px;"></td></tr>
+    </table>
+  </td></tr>
+
+  <!-- footer -->
+  <tr><td style="padding:16px 8px 0;font-size:12px;line-height:18px;color:#6B7280;">
+    {% if sources %}
+    <div style="font-weight:700;color:#4B5563;margin:0 0 4px;">Where this information comes from</div>
+    <ul style="margin:0 0 10px;padding-left:18px;">
+      {% for item in sources %}<li style="margin:0 0 2px;">{{ item|safe }}</li>{% endfor %}
+    </ul>
+    {% endif %}
+    <p style="margin:0;">Sent by {{ app_name }}, a self-hosted flight tracker.</p>
+    {{ extra_footer_marker|safe }}
+  </td></tr>
+
+</table>
+</td></tr>
+</table>
+</body>
+</html>
